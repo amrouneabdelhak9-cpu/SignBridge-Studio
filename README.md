@@ -35,10 +35,10 @@ Create a folder named `models` in the project root and download the following fi
 | model_scripted.pt                                                                                                                           | https://huggingface.co/amrouneabdelhak9/SignBridge-Studio-Models/blob/main/model/model_scripted.pt           |
 | model.onnx                                                                                                                                  | https://huggingface.co/amrouneabdelhak9/SignBridge-Studio-Models/blob/main/model/model.onnx                  |
 | model.onnx.data                     https://huggingface.co/amrouneabdelhak9/SignBridge-Studio-Models/blob/main/model/model.onnx.data        |                                                                                                              |
-
+all models                      here https://huggingface.co/amrouneabdelhak9/SignBridge-Studio-Models/tree/main/model
 After downloading, place all files inside:
 
-models/  https://huggingface.co/amrouneabdelhak9/SignBridge-Studio-Models/tree/main/model
+models/  
 
 Then run:
 
