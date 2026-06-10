@@ -22,6 +22,29 @@ A real-time sign language translation system powered by Computer Vision and Deep
 - Computer Vision
 
 ## Installation
+## Model Download
+
+Due to GitHub file size limitations, the trained AI models are hosted on Hugging Face.
+
+Create a folder named `models` in the project root and download the following files:
+
+| Model                                                                                                                                       | Download                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| asl_alphabet_model.keras                                                                                                                    | https://huggingface.co/amrouneabdelhak9/SignBridge-Studio-Models/resolve/main/model/asl_alphabet_model.keras |
+| custom_signs.pt                                                                                                                             |                                                                                                              |
+| model_scripted.pt                                                                                                                           | https://huggingface.co/amrouneabdelhak9/SignBridge-Studio-Models/blob/main/model/model_scripted.pt           |
+| model.onnx                                                                                                                                  | https://huggingface.co/amrouneabdelhak9/SignBridge-Studio-Models/blob/main/model/model.onnx                  |
+| model.onnx.data                     https://huggingface.co/amrouneabdelhak9/SignBridge-Studio-Models/blob/main/model/model.onnx.data        |                                                                                                              |
+
+After downloading, place all files inside:
+
+models/  https://huggingface.co/amrouneabdelhak9/SignBridge-Studio-Models/tree/main/model
+
+Then run:
+
+pip install -r requirements.txt
+
+python main.py
 
 ```bash
 pip install -r requirements.txt
