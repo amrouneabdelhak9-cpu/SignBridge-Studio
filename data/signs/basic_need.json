@@ -1,0 +1,157 @@
+[
+  {
+    "id": "b1",
+    "name": "Water",
+    "instruction": "W-hand taps chin twice"
+  },
+  {
+    "id": "b2",
+    "name": "Food",
+    "instruction": "Fingertips tap lips twice"
+  },
+  {
+    "id": "b3",
+    "name": "Hungry",
+    "instruction": "C-hand slides down chest"
+  },
+  {
+    "id": "b4",
+    "name": "Thirsty",
+    "instruction": "Index traces down throat"
+  },
+  {
+    "id": "b5",
+    "name": "Tired",
+    "instruction": "Bent hands drop on chest"
+  },
+  {
+    "id": "b6",
+    "name": "Sleep",
+    "instruction": "Hand closes in front of face"
+  },
+  {
+    "id": "b7",
+    "name": "Bathroom",
+    "instruction": "T-hand shakes side to side"
+  },
+  {
+    "id": "b8",
+    "name": "Home",
+    "instruction": "Fingers to mouth then to cheek"
+  },
+  {
+    "id": "b9",
+    "name": "Money",
+    "instruction": "Flat hand taps back of other hand"
+  },
+  {
+    "id": "b10",
+    "name": "Work",
+    "instruction": "S-hands tap wrist twice"
+  },
+  {
+    "id": "b11",
+    "name": "School",
+    "instruction": "Flat hand claps down on other hand"
+  },
+  {
+    "id": "b12",
+    "name": "Car",
+    "instruction": "Both fists drive steering wheel"
+  },
+  {
+    "id": "b13",
+    "name": "Bus",
+    "instruction": "B-hands mimic holding wheel"
+  },
+  {
+    "id": "b14",
+    "name": "Walk",
+    "instruction": "Flat hands alternate stepping"
+  },
+  {
+    "id": "b15",
+    "name": "Sit",
+    "instruction": "Curved fingers sit on opposite index"
+  },
+  {
+    "id": "b16",
+    "name": "Stand",
+    "instruction": "V-hand stands on flat palm"
+  },
+  {
+    "id": "b17",
+    "name": "Hot",
+    "instruction": "Claw hand turns away from mouth"
+  },
+  {
+    "id": "b18",
+    "name": "Cold",
+    "instruction": "S-hands shiver at shoulders"
+  },
+  {
+    "id": "b19",
+    "name": "Open",
+    "instruction": "Flat hands pull apart"
+  },
+  {
+    "id": "b20",
+    "name": "Close",
+    "instruction": "Flat hands press together"
+  },
+  {
+    "id": "b21",
+    "name": "Give",
+    "instruction": "Flat hand pushes forward"
+  },
+  {
+    "id": "b22",
+    "name": "Take",
+    "instruction": "Open hand pulls back to body"
+  },
+  {
+    "id": "b23",
+    "name": "Buy",
+    "instruction": "Flat hand lifts off other palm"
+  },
+  {
+    "id": "b24",
+    "name": "Time",
+    "instruction": "Index taps back of wrist"
+  },
+  {
+    "id": "b25",
+    "name": "Today",
+    "instruction": "Y-hands drop, then flat hands rise"
+  },
+  {
+    "id": "b26",
+    "name": "Tomorrow",
+    "instruction": "A-hand arcs forward from cheek"
+  },
+  {
+    "id": "b27",
+    "name": "Yesterday",
+    "instruction": "A-hand arcs backward from cheek"
+  },
+  {
+    "id": "b28",
+    "name": "Now",
+    "instruction": "Y-hands drop down together"
+  },
+  {
+    "id": "b29",
+    "name": "Later",
+    "instruction": "L-hand tilts forward"
+  },
+  {
+    "id": "b30",
+    "name": "Before",
+    "instruction": "Flat hand draws back toward shoulder"
+  },
+  {
+    "id": "b31",
+    "name": "After",
+    "instruction": "Flat hand arcs forward over other"
+  }
+]

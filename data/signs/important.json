@@ -1,0 +1,102 @@
+[
+  {
+    "id": "i1",
+    "name": "Important",
+    "instruction": "F-hands rise together in front"
+  },
+  {
+    "id": "i2",
+    "name": "Remember",
+    "instruction": "Thumb touches temple then moves down"
+  },
+  {
+    "id": "i3",
+    "name": "Forget",
+    "instruction": "Open hand swipes across forehead"
+  },
+  {
+    "id": "i4",
+    "name": "Know",
+    "instruction": "Bent hand taps side of head"
+  },
+  {
+    "id": "i5",
+    "name": "Think",
+    "instruction": "Index circles at temple"
+  },
+  {
+    "id": "i6",
+    "name": "Learn",
+    "instruction": "Fingers close from palm to head"
+  },
+  {
+    "id": "i7",
+    "name": "Teach",
+    "instruction": "Flat O-hands push forward from head"
+  },
+  {
+    "id": "i8",
+    "name": "True",
+    "instruction": "Index moves forward from mouth"
+  },
+  {
+    "id": "i9",
+    "name": "False",
+    "instruction": "Index swipes across lips"
+  },
+  {
+    "id": "i10",
+    "name": "Careful",
+    "instruction": "K-hands tap twice, eyes watching"
+  },
+  {
+    "id": "i11",
+    "name": "Different",
+    "instruction": "Index fingers cross and pull apart"
+  },
+  {
+    "id": "i12",
+    "name": "Same",
+    "instruction": "Y-hand rocks between two objects"
+  },
+  {
+    "id": "i13",
+    "name": "More",
+    "instruction": "Flat O-hands tap together"
+  },
+  {
+    "id": "i14",
+    "name": "Less",
+    "instruction": "Flat hand lowers below other hand"
+  },
+  {
+    "id": "i15",
+    "name": "All",
+    "instruction": "Open hand arcs and closes on other"
+  },
+  {
+    "id": "i16",
+    "name": "None",
+    "instruction": "O-hand swings side to side"
+  },
+  {
+    "id": "i17",
+    "name": "Some",
+    "instruction": "Curved hand slices over flat palm"
+  },
+  {
+    "id": "i18",
+    "name": "Many",
+    "instruction": "S-hands open to 5-hands twice"
+  },
+  {
+    "id": "i19",
+    "name": "Question",
+    "instruction": "Index draws question mark in air"
+  },
+  {
+    "id": "i20",
+    "name": "Answer",
+    "instruction": "Both index fingers drop forward"
+  }
+]

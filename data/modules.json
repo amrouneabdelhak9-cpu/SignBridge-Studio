@@ -1,0 +1,44 @@
+[
+  {
+    "id": "greetings",
+    "name": "Greetings",
+    "icon": "👋",
+    "total": 24,
+    "color": "#00d4ff"
+  },
+  {
+    "id": "courtesy",
+    "name": "Courtesy",
+    "icon": "🤝",
+    "total": 18,
+    "color": "#7c3aed"
+  },
+  {
+    "id": "emergency",
+    "name": "Emergency",
+    "icon": "🚨",
+    "total": 12,
+    "color": "#e040fb"
+  },
+  {
+    "id": "basic_need",
+    "name": "Basic Need",
+    "icon": "💧",
+    "total": 31,
+    "color": "#00ffcc"
+  },
+  {
+    "id": "important",
+    "name": "Important",
+    "icon": "⚡",
+    "total": 20,
+    "color": "#f59e0b"
+  },
+  {
+    "id": "family",
+    "name": "Family",
+    "icon": "❤️",
+    "total": 16,
+    "color": "#00d4ff"
+  }
+]

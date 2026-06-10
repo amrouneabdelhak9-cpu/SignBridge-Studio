@@ -1,0 +1,82 @@
+[
+  {
+    "id": "f1",
+    "name": "Family",
+    "instruction": "F-hands circle outward and meet"
+  },
+  {
+    "id": "f2",
+    "name": "Mother",
+    "instruction": "Thumb taps chin with open hand"
+  },
+  {
+    "id": "f3",
+    "name": "Father",
+    "instruction": "Thumb taps forehead with open hand"
+  },
+  {
+    "id": "f4",
+    "name": "Sister",
+    "instruction": "L-hand from jaw slides to other L"
+  },
+  {
+    "id": "f5",
+    "name": "Brother",
+    "instruction": "L-hand from forehead slides to other"
+  },
+  {
+    "id": "f6",
+    "name": "Baby",
+    "instruction": "Arms rock imaginary baby"
+  },
+  {
+    "id": "f7",
+    "name": "Child",
+    "instruction": "Flat hand pats downward"
+  },
+  {
+    "id": "f8",
+    "name": "Grandmother",
+    "instruction": "Thumb on chin, arcs forward twice"
+  },
+  {
+    "id": "f9",
+    "name": "Grandfather",
+    "instruction": "Thumb on forehead, arcs forward twice"
+  },
+  {
+    "id": "f10",
+    "name": "Friend",
+    "instruction": "Linked index fingers swap"
+  },
+  {
+    "id": "f11",
+    "name": "Love",
+    "instruction": "Crossed fists press to heart"
+  },
+  {
+    "id": "f12",
+    "name": "Together",
+    "instruction": "A-hands circle together"
+  },
+  {
+    "id": "f13",
+    "name": "Alone",
+    "instruction": "Index circles slowly alone"
+  },
+  {
+    "id": "f14",
+    "name": "Cousin",
+    "instruction": "C-hand shakes near cheek"
+  },
+  {
+    "id": "f15",
+    "name": "Uncle",
+    "instruction": "U-hand shakes near temple"
+  },
+  {
+    "id": "f16",
+    "name": "Aunt",
+    "instruction": "A-hand shakes near cheek"
+  }
+]

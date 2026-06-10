@@ -1,0 +1,62 @@
+[
+  {
+    "id": "e1",
+    "name": "Help!",
+    "instruction": "Thumb on fist, raise up urgently"
+  },
+  {
+    "id": "e2",
+    "name": "Danger",
+    "instruction": "A-hand brushes up on back of hand"
+  },
+  {
+    "id": "e3",
+    "name": "Fire",
+    "instruction": "Fingers wiggle upward like flames"
+  },
+  {
+    "id": "e4",
+    "name": "Police",
+    "instruction": "C-hand taps badge area on chest"
+  },
+  {
+    "id": "e5",
+    "name": "Doctor",
+    "instruction": "Tap wrist pulse point with fingers"
+  },
+  {
+    "id": "e6",
+    "name": "Hospital",
+    "instruction": "H-hand draws cross on upper arm"
+  },
+  {
+    "id": "e7",
+    "name": "Ambulance",
+    "instruction": "A-hands rotate, then cross chest"
+  },
+  {
+    "id": "e8",
+    "name": "Call 911",
+    "instruction": "Y-hand to ear, then 9-1-1"
+  },
+  {
+    "id": "e9",
+    "name": "Hurt",
+    "instruction": "Both index fingers point to pain area"
+  },
+  {
+    "id": "e10",
+    "name": "Medicine",
+    "instruction": "Middle finger stirs on palm"
+  },
+  {
+    "id": "e11",
+    "name": "Allergy",
+    "instruction": "Index hooks nose, then index touches"
+  },
+  {
+    "id": "e12",
+    "name": "Lost",
+    "instruction": "Open hands drop and spread"
+  }
+]

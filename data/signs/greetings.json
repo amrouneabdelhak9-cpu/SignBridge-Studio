@@ -1,0 +1,122 @@
+[
+  {
+    "id": "g1",
+    "name": "Hello",
+    "instruction": "Extend hand forward · Open palm · Wave gently"
+  },
+  {
+    "id": "g2",
+    "name": "Good Morning",
+    "instruction": "Raise flat hand · Move from chin outward"
+  },
+  {
+    "id": "g3",
+    "name": "Good Evening",
+    "instruction": "Flat hand drops from chin downward"
+  },
+  {
+    "id": "g4",
+    "name": "Goodbye",
+    "instruction": "Open hand · Wave side to side"
+  },
+  {
+    "id": "g5",
+    "name": "Welcome",
+    "instruction": "Both arms open wide toward visitor"
+  },
+  {
+    "id": "g6",
+    "name": "Nice to meet",
+    "instruction": "Shake both fists together twice"
+  },
+  {
+    "id": "g7",
+    "name": "How are you",
+    "instruction": "Point out, then bring hand to chest"
+  },
+  {
+    "id": "g8",
+    "name": "I am fine",
+    "instruction": "Thumbs up, move hand forward"
+  },
+  {
+    "id": "g9",
+    "name": "See you later",
+    "instruction": "Point, then wave hand away"
+  },
+  {
+    "id": "g10",
+    "name": "Good night",
+    "instruction": "Curved hand lowers over opposite arm"
+  },
+  {
+    "id": "g11",
+    "name": "Please",
+    "instruction": "Flat hand circles on chest"
+  },
+  {
+    "id": "g12",
+    "name": "You",
+    "instruction": "Index finger points directly forward"
+  },
+  {
+    "id": "g13",
+    "name": "Me",
+    "instruction": "Index finger points to chest"
+  },
+  {
+    "id": "g14",
+    "name": "We",
+    "instruction": "Index sweeps from self to partner"
+  },
+  {
+    "id": "g15",
+    "name": "They",
+    "instruction": "Index sweeps away from body"
+  },
+  {
+    "id": "g16",
+    "name": "Come",
+    "instruction": "Index finger curls toward body"
+  },
+  {
+    "id": "g17",
+    "name": "Go",
+    "instruction": "Index finger points away, flick wrist"
+  },
+  {
+    "id": "g18",
+    "name": "Here",
+    "instruction": "Both flat hands point down to ground"
+  },
+  {
+    "id": "g19",
+    "name": "There",
+    "instruction": "Index points outward to a location"
+  },
+  {
+    "id": "g20",
+    "name": "Yes",
+    "instruction": "Fist nods up and down"
+  },
+  {
+    "id": "g21",
+    "name": "No",
+    "instruction": "Index and middle tap thumb twice"
+  },
+  {
+    "id": "g22",
+    "name": "Maybe",
+    "instruction": "Both flat hands rock alternately"
+  },
+  {
+    "id": "g23",
+    "name": "What",
+    "instruction": "Index fingers tap together, palms out"
+  },
+  {
+    "id": "g24",
+    "name": "Who",
+    "instruction": "Index traces circle near mouth"
+  }
+]

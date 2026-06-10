@@ -1,0 +1,2073 @@
+# ui/translation_screen.py
+"""
+SignBridge Studio — Translation Screen (Futuristic AI OS)
+==========================================================
+Premium redesign: dominant camera, glassmorphism panels, deep cosmos gradients.
+Refactored: balanced dashboard grid, unified AI Control Center footer, crisp
+ typography, and intelligent vertical-space distribution.
+"""
+
+import time
+import math
+import cv2                      # [CHANGED] — added
+import numpy as np              # [CHANGED] — added
+
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPoint
+from PySide6.QtGui import (
+    QColor, QPainter, QPen, QPixmap, QLinearGradient, QRadialGradient,
+    QFont, QBrush, QPainterPath, QImage   # [CHANGED] — added QImage
+)
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QFrame, QSizePolicy, QFileDialog, QStackedWidget, QProgressBar,
+    QGraphicsDropShadowEffect, QDialog, QTextEdit   # [CHANGED] — added QDialog, QTextEdit
+)
+
+from backend.alphabet_inference_engine import AlphabetInferenceEngine   # [CHANGED] — added
+
+# ============================================================
+# Premium Color System — Deep Cosmos + Electric Cyan + Violet
+# ============================================================
+BG_DEEP         = "#060A1E"   # Deepest cosmos background
+BG_MID          = "#080D26"   # Mid-layer
+BG_SURFACE      = "#0C1535"   # Panel surface base
+BG_GLASS        = "rgba(14, 22, 52, 0.80)"
+BG_GLASS_HOVER  = "rgba(14, 22, 52, 0.95)"
+BG_INNER        = "#040710"   # Camera / deep inner
+
+TEXT_PRIMARY    = "#EEF4FF"
+TEXT_SECONDARY  = "#7EA8CC"
+TEXT_MUTED      = "#334E68"
+TEXT_LABEL      = "#00E5FF"
+
+ACCENT_CYAN     = "#00E5FF"
+ACCENT_TEAL     = "#00CFCF"
+ACCENT_GREEN    = "#00F5C4"
+ACCENT_EMERALD  = "#00F5C4"   # alias kept for compat
+ACCENT_VIOLET   = "#8B5CF6"
+ACCENT_BLUE     = "#3D8EFF"
+ACCENT_GLOW     = "#00E5FF"
+
+GLOW_CYAN       = "rgba(0, 229, 255, 0.22)"
+GLOW_VIOLET     = "rgba(139, 92, 246, 0.18)"
+GLOW_GREEN      = "rgba(0, 245, 196, 0.14)"
+BORDER_GHOST    = "rgba(0, 229, 255, 0.06)"
+BORDER_GLASS    = "rgba(255, 255, 255, 0.055)"
+BORDER_CYAN     = "rgba(0, 229, 255, 0.20)"
+BORDER_VIOLET   = "rgba(139, 92, 246, 0.22)"
+BORDER_GREEN    = "rgba(0, 245, 196, 0.18)"
+
+
+# ─────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────
+
+def _glow_shadow(color: str = "#00E5FF", radius: int = 22,
+                 alpha: int = 28) -> QGraphicsDropShadowEffect:
+    """Premium subtle glow — reduced alpha for a softer, premium feel."""
+    shadow = QGraphicsDropShadowEffect()
+    shadow.setBlurRadius(radius)
+    shadow.setOffset(0, 4)
+    c = QColor(color)
+    c.setAlpha(alpha)
+    shadow.setColor(c)
+    return shadow
+
+
+def _apply_fonts():
+    default_font = QFont("Inter", 10)
+    default_font.setStyleHint(QFont.SansSerif)
+    QFont.setDefault(default_font)
+
+
+def _section_label(text: str) -> QLabel:
+    """Crisp tech header — increased size & spacing for readability."""
+    lbl = QLabel(text.upper())
+    lbl.setStyleSheet(f"""
+        color: {TEXT_LABEL};
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 3.2px;
+        font-family: 'Inter', sans-serif;
+    """)
+    return lbl
+
+
+def _pill_badge(text: str, color: str = ACCENT_CYAN,
+                bg_alpha: int = 12) -> QLabel:
+    """Tiny inline status badge for the header bar."""
+    r, g, b = QColor(color).red(), QColor(color).green(), QColor(color).blue()
+    lbl = QLabel(text)
+    lbl.setStyleSheet(f"""
+        QLabel {{
+            color: {color};
+            background: rgba({r}, {g}, {b}, {bg_alpha});
+            border: 1px solid rgba({r}, {g}, {b}, 35);
+            border-radius: 10px;
+            font-size: 9px;
+            font-weight: 800;
+            letter-spacing: 1.6px;
+            font-family: 'Inter', sans-serif;
+            padding: 3px 10px;
+        }}
+    """)
+    return lbl
+
+
+# ─────────────────────────────────────────────────────────────
+# Clickable Label
+# ─────────────────────────────────────────────────────────────
+
+class ClickableLabel(QLabel):
+    """QLabel that emits a clicked signal when pressed."""
+    clicked = Signal()
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+# ─────────────────────────────────────────────────────────────
+# Glass Panel
+# ─────────────────────────────────────────────────────────────
+
+class _GlassPanel(QFrame):
+    def __init__(self, parent=None, glow=True, glow_color="#00E5FF",
+                 border=BORDER_GLASS):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: qlineargradient(x1:0, y1:0, x2:0.4, y2:1,
+                    stop:0 rgba(20, 34, 72, 0.82),
+                    stop:1 rgba(7, 11, 30, 0.90));
+                border-radius: 22px;
+                border: none;
+            }}
+        """)
+        if glow:
+            self.setGraphicsEffect(_glow_shadow(glow_color, 32, 24))
+
+
+# ─────────────────────────────────────────────────────────────
+# Pill Button
+# ─────────────────────────────────────────────────────────────
+
+class _PillButton(QPushButton):
+    def __init__(self, text: str, variant="primary", parent=None):
+        super().__init__(text, parent)
+        self._variant = variant
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(44)
+        self.setMinimumWidth(100)
+        self._update_style()
+
+    def _update_style(self):
+        base = """
+            QPushButton {
+                font-family: 'Inter', 'SF Pro Text', sans-serif;
+                font-weight: 700;
+                font-size: 11px;
+                letter-spacing: 1.5px;
+                border-radius: 22px;
+                padding: 0 26px;
+            }
+        """
+        if self._variant == "primary":
+            self.setStyleSheet(base + f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 {ACCENT_CYAN}, stop:1 {ACCENT_GREEN});
+                    color: #060A1E;
+                    border: none;
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #40EEFF, stop:1 #40FFD8);
+                }}
+                QPushButton:pressed {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #00BACE, stop:1 #00C9A0);
+                }}
+            """)
+        elif self._variant == "danger":
+            self.setStyleSheet(base + f"""
+                QPushButton {{
+                    background: rgba(0, 245, 196, 0.09);
+                    color: {ACCENT_GREEN};
+                    border: none;
+                }}
+                QPushButton:hover {{
+                    background: rgba(0, 245, 196, 0.20);
+                    color: #FFFFFF;
+                }}
+                QPushButton:pressed {{
+                    background: rgba(0, 245, 196, 0.35);
+                }}
+            """)
+        elif self._variant == "secondary":
+            self.setStyleSheet(base + f"""
+                QPushButton {{
+                    background: rgba(0, 229, 255, 0.06);
+                    color: {TEXT_SECONDARY};
+                    border: none;
+                }}
+                QPushButton:hover {{
+                    background: rgba(0, 229, 255, 0.16);
+                    color: {TEXT_PRIMARY};
+                }}
+            """)
+        elif self._variant == "icon":
+            self.setFixedSize(42, 42)
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(0, 229, 255, 0.07);
+                    color: {ACCENT_CYAN};
+                    font-size: 16px;
+                    border-radius: 21px;
+                    border: none;
+                    padding: 0;
+                    min-width: 0;
+                    font-family: 'Inter', sans-serif;
+                    font-weight: 600;
+                }}
+                QPushButton:hover {{
+                    background: rgba(0, 229, 255, 0.22);
+                    color: #FFFFFF;
+                }}
+                QPushButton:pressed {{
+                    background: rgba(0, 229, 255, 0.38);
+                }}
+            """)
+
+
+# ─────────────────────────────────────────────────────────────
+# Hero / Mode Button
+# ─────────────────────────────────────────────────────────────
+
+class _HeroButton(QPushButton):
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(44)
+        self.setMinimumWidth(170)
+        self._update_style(False)
+
+    def _update_style(self, checked: bool):
+        if checked:
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 {ACCENT_CYAN}, stop:1 {ACCENT_GREEN});
+                    color: #060A1E;
+                    border: none;
+                    border-radius: 22px;
+                    font-weight: 700;
+                    font-size: 11px;
+                    letter-spacing: 1.5px;
+                    font-family: 'Inter', sans-serif;
+                    padding: 0 26px;
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #40EEFF, stop:1 #40FFD8);
+                }}
+            """)
+        else:
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(0, 229, 255, 0.07);
+                    color: {TEXT_SECONDARY};
+                    border: none;
+                    border-radius: 22px;
+                    font-weight: 700;
+                    font-size: 11px;
+                    letter-spacing: 1.5px;
+                    font-family: 'Inter', sans-serif;
+                    padding: 0 26px;
+                }}
+                QPushButton:hover {{
+                    background: rgba(0, 229, 255, 0.16);
+                    color: {ACCENT_CYAN};
+                }}
+            """)
+
+    def setChecked(self, checked: bool):
+        super().setChecked(checked)
+        self._update_style(checked)
+
+
+# ─────────────────────────────────────────────────────────────
+# Confidence Ring (Progress Bar)
+# ─────────────────────────────────────────────────────────────
+
+class _ConfidenceRing(QProgressBar):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTextVisible(False)
+        self.setFixedSize(32, 32)
+        self.setMaximum(100)
+        self.setValue(0)
+        self.setStyleSheet(f"""
+            QProgressBar {{
+                background: rgba(0, 229, 255, 0.07);
+                border-radius: 16px;
+                border: none;
+            }}
+            QProgressBar::chunk {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {ACCENT_CYAN}, stop:1 {ACCENT_GREEN});
+                border-radius: 16px;
+            }}
+        """)
+
+
+# ─────────────────────────────────────────────────────────────
+# Camera HUD Overlay (animated)
+# ─────────────────────────────────────────────────────────────
+
+class _CameraHUD(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._angle = 0
+        self._pulse = 0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(28)
+
+    def _tick(self):
+        self._angle = (self._angle + 0.8) % 360
+        self._pulse = (self._pulse + 2) % 360
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        cx, cy = w // 2, h // 2
+
+        # Vignette
+        vignette = QRadialGradient(cx, cy, max(w, h) * 0.55)
+        vignette.setColorAt(0.0, QColor(0, 0, 0, 0))
+        vignette.setColorAt(0.72, QColor(4, 7, 16, 0))
+        vignette.setColorAt(1.0, QColor(4, 7, 16, 80))
+        p.setBrush(QBrush(vignette))
+        p.setPen(Qt.NoPen)
+        p.drawRect(0, 0, w, h)
+
+        # Corner brackets — minimal, thin
+        arm = 18
+        gap = 14
+        pen_corner = QPen(QColor(ACCENT_CYAN), 1.0)
+        pen_corner.setCapStyle(Qt.RoundCap)
+        p.setPen(pen_corner)
+        p.drawLine(gap, gap + arm, gap, gap)
+        p.drawLine(gap, gap, gap + arm, gap)
+        p.drawLine(w - gap - arm, gap, w - gap, gap)
+        p.drawLine(w - gap, gap, w - gap, gap + arm)
+        p.drawLine(gap, h - gap - arm, gap, h - gap)
+        p.drawLine(gap, h - gap, gap + arm, h - gap)
+        p.drawLine(w - gap - arm, h - gap, w - gap, h - gap)
+        p.drawLine(w - gap, h - gap, w - gap, h - gap - arm)
+
+        # Corner dots
+        p.setPen(Qt.NoPen)
+        corner_alpha = int(180 + 60 * math.sin(math.radians(self._pulse)))
+        p.setBrush(QColor(0, 229, 255, corner_alpha))
+        for cx2, cy2 in [(gap, gap), (w - gap, gap),
+                         (gap, h - gap), (w - gap, h - gap)]:
+            p.drawEllipse(cx2 - 3, cy2 - 3, 6, 6)
+
+        # Rotating dashed ring
+        r_ring = 36
+        pulse_alpha = int(50 + 28 * math.sin(math.radians(self._pulse)))
+        pen_ring = QPen(QColor(0, 229, 255, pulse_alpha), 1.0, Qt.DashLine)
+        pen_ring.setDashPattern([5, 10])
+        p.setPen(pen_ring)
+        p.setBrush(Qt.NoBrush)
+        p.save()
+        p.translate(cx, cy)
+        p.rotate(self._angle)
+        p.drawEllipse(-r_ring, -r_ring, r_ring * 2, r_ring * 2)
+        p.restore()
+
+        # Center aiming dot
+        dot_alpha = int(160 + 80 * math.sin(math.radians(self._pulse)))
+        p.setBrush(QColor(0, 229, 255, dot_alpha))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(cx - 3, cy - 3, 6, 6)
+
+        # Crosshair lines — minimal
+        pen_cross = QPen(QColor(0, 229, 255, 50), 0.6)
+        p.setPen(pen_cross)
+        p.drawLine(cx - 14, cy, cx - 6, cy)
+        p.drawLine(cx + 6, cy, cx + 14, cy)
+        p.drawLine(cx, cy - 14, cx, cy - 6)
+        p.drawLine(cx, cy + 6, cx, cy + 14)
+
+        # Scan line
+        scan_y = int(gap + (h - gap * 2) * ((self._angle / 360)))
+        scan_grad = QLinearGradient(0, scan_y, w, scan_y)
+        scan_grad.setColorAt(0.0, QColor(0, 229, 255, 0))
+        scan_grad.setColorAt(0.35, QColor(0, 229, 255, 0))
+        scan_grad.setColorAt(0.5, QColor(0, 229, 255, 40))
+        scan_grad.setColorAt(0.65, QColor(0, 229, 255, 0))
+        scan_grad.setColorAt(1.0, QColor(0, 229, 255, 0))
+        pen_scan = QPen(QBrush(scan_grad), 1.2)
+        p.setPen(pen_scan)
+        p.drawLine(gap, scan_y, w - gap, scan_y)
+        p.end()
+
+
+# ─────────────────────────────────────────────────────────────
+# Hand Icon (animated placeholder)
+# ─────────────────────────────────────────────────────────────
+
+class _HandIcon(QWidget):
+    def __init__(self, size: int = 80, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._pulse = 0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(40)
+
+    def _tick(self):
+        self._pulse = (self._pulse + 2) % 360
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        pulse_alpha = int(20 + 16 * math.sin(math.radians(self._pulse)))
+        glow = QRadialGradient(w / 2, h / 2, w * 0.52)
+        c1 = QColor(ACCENT_CYAN)
+        c1.setAlpha(pulse_alpha)
+        c2 = QColor(ACCENT_EMERALD)
+        c2.setAlpha(0)
+        glow.setColorAt(0, c1)
+        glow.setColorAt(1, c2)
+        p.setBrush(QBrush(glow))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(0, 0, w, h)
+        pen = QPen(QColor(ACCENT_CYAN), 1.0)
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(int(w * 0.24), int(h * 0.44),
+                          int(w * 0.52), int(h * 0.42), 8, 8)
+        fw = int(w * 0.11)
+        for ox, oy, fh in [(0.28, 0.10, 0.38), (0.42, 0.04, 0.44),
+                            (0.55, 0.10, 0.38), (0.65, 0.20, 0.30)]:
+            p.drawRoundedRect(int(w * ox), int(h * oy), fw,
+                              int(h * fh), 6, 6)
+        p.drawRoundedRect(int(w * 0.08), int(h * 0.48),
+                          int(fw * 1.3), int(h * 0.22), 6, 6)
+        p.end()
+
+
+# ─────────────────────────────────────────────────────────────
+# Voice Visualizer (animated bars) — REMOVED from UI, kept for compat
+# ─────────────────────────────────────────────────────────────
+
+class _VoiceVisualizer(QWidget):
+    """Animated cyan bars to fill voice card and indicate interactivity."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._t = 0
+        self._bars = 14
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(60)
+
+    def _tick(self):
+        self._t += 1
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return
+        total_gap = self._bars + 1
+        bar_w = max(3, int(w / (self._bars * 2 + total_gap)))
+        gap = bar_w
+        start_x = int((w - (self._bars * bar_w + (self._bars - 1) * gap)) / 2)
+        for i in range(self._bars):
+            x = start_x + i * (bar_w + gap)
+            phase = (self._t * 0.12) + (i * 0.9)
+            norm = abs(math.sin(phase))
+            bh = int((0.15 + 0.55 * norm) * h)
+            y = h - bh
+            alpha = int(50 + 90 * norm)
+            color = QColor(0, 229, 255, alpha)
+            p.setPen(Qt.NoPen)
+            p.setBrush(color)
+            p.drawRoundedRect(x, y, bar_w, bh, bar_w // 2, bar_w // 2)
+        p.end()
+
+
+# ─────────────────────────────────────────────────────────────
+# Ambient Background
+# ─────────────────────────────────────────────────────────────
+
+class _AmbientBackground(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.lower()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+
+        # Top-left electric cyan bloom
+        g1 = QRadialGradient(w * 0.18, h * 0.14, w * 0.52)
+        g1.setColorAt(0, QColor(0, 229, 255, 24))
+        g1.setColorAt(1, QColor(6, 10, 30, 0))
+        p.setBrush(QBrush(g1))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(int(w * 0.18 - w * 0.52),
+                      int(h * 0.14 - w * 0.52),
+                      int(w * 1.04), int(w * 1.04))
+
+        # Bottom-right violet bloom
+        g2 = QRadialGradient(w * 0.84, h * 0.78, w * 0.44)
+        g2.setColorAt(0, QColor(139, 92, 246, 20))
+        g2.setColorAt(1, QColor(6, 10, 30, 0))
+        p.setBrush(QBrush(g2))
+        p.drawEllipse(int(w * 0.84 - w * 0.44),
+                      int(h * 0.78 - w * 0.44),
+                      int(w * 0.88), int(w * 0.88))
+
+        # Centre subtle emerald whisper
+        g3 = QRadialGradient(w * 0.52, h * 0.50, w * 0.32)
+        g3.setColorAt(0, QColor(0, 245, 196, 9))
+        g3.setColorAt(1, QColor(6, 10, 30, 0))
+        p.setBrush(QBrush(g3))
+        p.drawEllipse(int(w * 0.52 - w * 0.32),
+                      int(h * 0.50 - w * 0.32),
+                      int(w * 0.64), int(w * 0.64))
+
+        # Subtle horizontal grid lines for depth
+        pen_grid = QPen(QColor(0, 229, 255, 5), 1)
+        p.setPen(pen_grid)
+        for y in range(0, h, 60):
+            p.drawLine(0, y, w, y)
+
+        p.end()
+
+
+# ─────────────────────────────────────────────────────────────
+# Thin Divider
+# ─────────────────────────────────────────────────────────────
+
+def _make_divider(vertical: bool = False) -> QFrame:
+    div = QFrame()
+    if vertical:
+        div.setFrameShape(QFrame.VLine)
+        div.setFixedWidth(1)
+    else:
+        div.setFrameShape(QFrame.HLine)
+        div.setFixedHeight(1)
+    div.setStyleSheet("background: rgba(0, 229, 255, 0.03); border: none;")
+    return div
+
+
+# ─────────────────────────────────────────────────────────────
+# TranslationScreen
+# ─────────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────────
+# SpeakThread — uses Windows SAPI directly via ctypes.
+# Completely separate from pyttsx3/TTSEngine — no shared state.
+# ─────────────────────────────────────────────────────────────
+
+class SpeakThread(QThread):
+    """One-shot thread that speaks text via Windows SAPI (not pyttsx3).
+    Creates its own COM object — zero conflict with TTSEngine."""
+
+    done  = Signal()
+    error = Signal(str)
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self._text = text
+        self.setTerminationEnabled(True)
+
+    def run(self):
+        # Try SAPI via comtypes first (no pyttsx3 conflict)
+        try:
+            import comtypes.client
+            sapi = comtypes.client.CreateObject("SAPI.SpVoice")
+            sapi.Rate = 0
+            sapi.Volume = 100
+            sapi.Speak(self._text)
+            self.done.emit()
+            return
+        except Exception:
+            pass
+        # Fallback: PowerShell System.Speech
+        try:
+            import subprocess
+            safe = self._text.replace('"', '')
+            script = (
+                "Add-Type -AssemblyName System.Speech; "
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                "$s.Rate = 0; "
+                '$s.Speak("' + safe + '")'
+            )
+            subprocess.run(
+                ["powershell", "-Command", script],
+                timeout=30,
+                capture_output=True
+            )
+            self.done.emit()
+        except Exception as e2:
+            self.error.emit(str(e2))
+
+
+class TranslationScreen(QWidget):
+    export_requested = Signal(str)
+    session_started  = Signal()
+    session_stopped  = Signal()
+
+    AUTO_ADD_CONFIDENCE  = 0.50
+    AUTO_ADD_COOLDOWN_MS = 2000
+    _NOISE_SIGNS = frozenset({"---", "???", "..."})
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("translation_screen")
+        self.setStyleSheet(f"""
+            QWidget#translation_screen {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0  {BG_DEEP},
+                    stop:0.5 {BG_MID},
+                    stop:1  #050817);
+            }}
+        """)
+        self._session_active      = False
+        self._detected_signs      = []
+        self._backend             = None
+        self._last_auto_added_sign = None
+        self._last_auto_added_time = 0
+        self._auto_add_enabled    = True
+        self._last_history_word   = None
+        self._last_llm_sentence   = ""   # local cache — survives backend resets
+        self._speak_thread        = None  # SpeakThread instance
+        # [CHANGED] — STT toggle state
+        self._stt_recording = False
+        self._stt_manual_stop = False
+        self._init_ui()
+        self._init_neural_stream()
+
+        # [CHANGED] — Alphabet mode engine
+        self._alphabet_engine = None
+        self._mode = "WORDS"
+
+    # ──────────────────────────────────────────
+    # UI Init
+    # ──────────────────────────────────────────
+
+    def _init_ui(self):
+        self._ambient = _AmbientBackground(self)
+        self._ambient.setGeometry(self.rect())
+        self.resizeEvent = self._on_resize
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 16, 28, 20)
+        root.setSpacing(14)
+
+        # Header
+        root.addWidget(self._build_header_widget())
+
+        # Main columns — camera + dashboard grid
+        cols = QHBoxLayout()
+        cols.setSpacing(18)
+
+        # Left — dominant camera column (now expands to fill height)
+        cols.addLayout(self._build_left_column(), 58)
+
+        # Right — structured dashboard panels (equal rhythm)
+        cols.addLayout(self._build_right_column(), 42)
+
+        root.addLayout(cols, 1)
+
+        # Bottom — unified AI Control Center (fills lower region)
+        root.addWidget(self._build_ai_control_center(), 0)
+
+        self._wire_signals()
+
+    def _on_resize(self, e):
+        self._ambient.setGeometry(self.rect())
+        if hasattr(self, '_cam_container') and self._cam_container and \
+                hasattr(self, 'confidence_overlay'):
+            self._update_conf_overlay_geometry()
+        super().resizeEvent(e)
+
+    # ──────────────────────────────────────────
+    # Neural Feedback Stream
+    # ──────────────────────────────────────────
+
+    def _init_neural_stream(self):
+        self._neural_messages = [
+            "> Neural core active — awaiting input",
+            "> Hand tracking model loaded [OK]",
+            "> Inference latency: 16ms",
+            "> Buffer stream synchronized",
+            "> Standby mode engaged",
+            "> Optical flow pipeline: stable",
+        ]
+        self._neural_idx = 0
+        self._neural_timer = QTimer(self)
+        self._neural_timer.timeout.connect(self._update_neural_stream)
+        self._neural_timer.start(1600)
+
+    def _update_neural_stream(self):
+        if not hasattr(self, '_neural_messages'):
+            return
+        self._neural_idx = (self._neural_idx + 1) % len(self._neural_messages)
+        msg = self._neural_messages[self._neural_idx]
+        cursor = "_" if (self._neural_idx % 2 == 0) else " "
+        if hasattr(self, 'neural_stream'):
+            self.neural_stream.setText(msg + cursor)
+
+    # ──────────────────────────────────────────
+    # Header Widget
+    # ──────────────────────────────────────────
+
+    def _build_header_widget(self) -> QWidget:
+        """Returns a fixed-height header widget with logo, title, and badges."""
+        container = QWidget()
+        container.setFixedHeight(52)
+        container.setStyleSheet("background: transparent;")
+
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+
+        # Logo mark
+        logo = QLabel("◈")
+        logo.setStyleSheet(f"""
+            color: {ACCENT_CYAN};
+            font-size: 26px;
+            font-weight: 300;
+        """)
+        row.addWidget(logo)
+
+        # Title block
+        title_block = QVBoxLayout()
+        title_block.setSpacing(1)
+        title_block.setContentsMargins(0, 0, 0, 0)
+
+        title = QLabel("Translation Studio")
+        title.setStyleSheet(f"""
+            font-family: 'Inter', sans-serif;
+            font-size: 19px;
+            font-weight: 800;
+            letter-spacing: -0.6px;
+            color: {TEXT_PRIMARY};
+        """)
+        sub = QLabel("SignBridge  ·  Neural Core  ·  v2")
+        sub.setStyleSheet(f"""
+            font-family: 'Inter', sans-serif;
+            font-size: 10px;
+            color: {TEXT_MUTED};
+            letter-spacing: 1.2px;
+        """)
+        title_block.addWidget(title)
+        title_block.addWidget(sub)
+        row.addLayout(title_block)
+
+        row.addStretch()
+
+        return container
+
+    # ──────────────────────────────────────────
+    # Left Column (Camera dominant — now expands)
+    # ──────────────────────────────────────────
+
+    def _build_left_column(self) -> QVBoxLayout:
+        col = QVBoxLayout()
+        col.setSpacing(12)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.addWidget(self._build_camera_panel(), 1)
+        col.addWidget(self._build_llm_panel(), 0)
+        return col
+
+    # ──────────────────────────────────────────
+    # Right Column (Structured dashboard grid)
+    # ──────────────────────────────────────────
+
+    def _build_right_column(self) -> QVBoxLayout:
+        col = QVBoxLayout()
+        col.setSpacing(12)
+        col.setContentsMargins(0, 0, 0, 0)
+        # Live Detection gets more space; Voice Synthesis gets less — balanced 2:1 ratio
+        col.addWidget(self._build_detection_strip(), 2)
+        # SIGN SEQUENCE panel removed from UI layout (kept hidden for backend compatibility)
+        self._signs_panel = self._build_signs_panel()
+        self._signs_panel.setParent(self)
+        self._signs_panel.hide()
+        col.addWidget(self._build_voice_panel(), 1)
+        return col
+
+    # ──────────────────────────────────────────
+    # Live Detection Strip (compact, crisp)
+    # ──────────────────────────────────────────
+
+    def _build_detection_strip(self) -> QWidget:
+        """Compact card showing the live-detected sign and confidence."""
+        panel = _GlassPanel(glow=True, glow_color=ACCENT_CYAN, border="none")
+        panel.setMinimumHeight(140)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(8)
+
+        # Top: title
+        layout.addWidget(_section_label("Live Detection"), 0, Qt.AlignTop)
+
+        # Middle: dark output frame containing scrollable word history
+        history_frame = QFrame()
+        history_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        history_frame.setStyleSheet(f"""
+            background: rgba(4, 7, 22, 0.65);
+            border-radius: 14px;
+            border: none;
+        """)
+        history_frame_layout = QVBoxLayout(history_frame)
+        history_frame_layout.setContentsMargins(10, 8, 10, 8)
+        history_frame_layout.setSpacing(0)
+
+        from PySide6.QtWidgets import QScrollArea
+        self._word_history_scroll = QScrollArea()
+        self._word_history_scroll.setWidgetResizable(True)
+        self._word_history_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._word_history_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._word_history_scroll.setStyleSheet("background: transparent; border: none;")
+        self._word_history_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self._word_history_container = QWidget()
+        self._word_history_container.setStyleSheet("background: transparent;")
+        self._word_history_layout = QVBoxLayout(self._word_history_container)
+        self._word_history_layout.setContentsMargins(0, 0, 0, 0)
+        self._word_history_layout.setSpacing(2)
+        self._word_history_layout.setAlignment(Qt.AlignTop)
+        self._word_history_scroll.setWidget(self._word_history_container)
+        history_frame_layout.addWidget(self._word_history_scroll)
+        layout.addWidget(history_frame, 1)
+
+        # Bottom row: predicted word label + actual predicted word (both same large size)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.setAlignment(Qt.AlignBottom)
+
+        self.current_word = QLabel("Predicted word  →")
+        self.current_word.setStyleSheet(f"""
+            color: {TEXT_SECONDARY};
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            font-family: 'Inter', sans-serif;
+        """)
+        row.addWidget(self.current_word, 0, Qt.AlignBottom)
+
+        self.detected_sign_value = QLabel("—")
+        self.detected_sign_value.setStyleSheet(f"""
+            color: {ACCENT_CYAN};
+            font-size: 18px;
+            font-weight: 800;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+        """)
+        row.addWidget(self.detected_sign_value, 0, Qt.AlignBottom)
+
+        row.addStretch(1)
+        layout.addLayout(row, 0)
+        return panel
+
+    # ──────────────────────────────────────────
+    # Camera Panel
+    # ──────────────────────────────────────────
+
+    def _build_camera_panel(self) -> QWidget:
+        panel = _GlassPanel(glow=True, glow_color=ACCENT_CYAN, border="none")
+        # Removed fixed height — expands to balance with right column
+        panel.setMinimumHeight(420)
+        panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(18, 16, 18, 18)
+        layout.setSpacing(12)
+
+        # ── Panel header ──
+        hdr = QHBoxLayout()
+        hdr.setSpacing(10)
+        hdr.setAlignment(Qt.AlignVCenter)
+        hdr.setContentsMargins(0, 0, 0, 0)
+
+        icon_lbl = QLabel("◈")
+        icon_lbl.setStyleSheet(f"color: {ACCENT_CYAN}; font-size: 13px;")
+        hdr.addWidget(icon_lbl, 0, Qt.AlignVCenter)
+        hdr.addWidget(_section_label("Neural Vision"), 0, Qt.AlignVCenter)
+
+        hdr.addStretch(1)
+
+        # Camera type badge
+        cam_badge = QLabel("● CAMERA")
+        cam_badge.setStyleSheet(f"""
+            color: {ACCENT_GREEN};
+            font-size: 9px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            font-family: 'Inter', sans-serif;
+        """)
+        hdr.addWidget(cam_badge, 0, Qt.AlignVCenter)
+
+        layout.addLayout(hdr)
+
+        # ── Camera stack (takes all remaining height) ──
+        self._cam_stack = QStackedWidget()
+        self._cam_stack.addWidget(self._build_cam_placeholder())
+
+        # Camera container (live feed)
+        self._cam_container = QFrame()
+        self._cam_container.setStyleSheet(f"""
+            background: {BG_INNER};
+            border-radius: 16px;
+            border: none;
+        """)
+        self._cam_container.setSizePolicy(QSizePolicy.Expanding,
+                                          QSizePolicy.Expanding)
+        self._cam_container.setGraphicsEffect(
+            _glow_shadow(ACCENT_CYAN, 40, 30))
+
+        cam_inner = QVBoxLayout(self._cam_container)
+        cam_inner.setContentsMargins(0, 0, 0, 0)
+
+        self._camera_label = QLabel()
+        self._camera_label.setAlignment(Qt.AlignCenter)
+        self._camera_label.setScaledContents(True)
+        cam_inner.addWidget(self._camera_label)
+
+        # HUD overlay
+        self._cam_hud = _CameraHUD(self._cam_container)
+        self._cam_hud.setGeometry(self._cam_container.rect())
+        self._cam_container.resizeEvent = lambda e: \
+            self._on_cam_container_resize(e)
+
+        # Confidence overlay (top-right of camera)
+        self.confidence_overlay = QLabel(self._cam_container)
+        self.confidence_overlay.setAlignment(Qt.AlignCenter)
+        self.confidence_overlay.setStyleSheet(f"""
+            background: rgba(4, 7, 16, 0.55);
+            color: {ACCENT_CYAN};
+            font-size: 12px;
+            font-weight: 800;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            border-radius: 10px;
+            padding: 4px 10px;
+            border: none;
+        """)
+        self.confidence_overlay.hide()
+
+        self._cam_stack.addWidget(self._cam_container)
+        layout.addWidget(self._cam_stack, 1)
+
+        return panel
+
+    def _on_cam_container_resize(self, event):
+        if hasattr(self, '_cam_hud'):
+            self._cam_hud.setGeometry(self._cam_container.rect())
+        self._update_conf_overlay_geometry()
+
+    def _update_conf_overlay_geometry(self):
+        if not hasattr(self, 'confidence_overlay') or \
+                not self.confidence_overlay:
+            return
+        margin = 12
+        ow = self.confidence_overlay.sizeHint().width()
+        oh = self.confidence_overlay.sizeHint().height()
+        if ow <= 0:
+            ow = 64
+        if oh <= 0:
+            oh = 32
+        x = self._cam_container.width() - ow - margin
+        y = margin
+        self.confidence_overlay.setGeometry(x, y, ow, oh)
+
+    def _build_cam_placeholder(self) -> QWidget:
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(w)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.addStretch()
+
+        # Glowing circle around hand icon
+        frame = QFrame()
+        frame.setFixedSize(120, 120)
+        frame.setStyleSheet(f"""
+            background: rgba(0, 229, 255, 0.04);
+            border-radius: 60px;
+            border: none;
+        """)
+        frame.setGraphicsEffect(_glow_shadow(ACCENT_CYAN, 50, 55))
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setAlignment(Qt.AlignCenter)
+        frame_layout.addWidget(_HandIcon(80))
+        layout.addWidget(frame, 0, Qt.AlignCenter)
+
+        hint = QLabel("CAMERA  INACTIVE")
+        hint.setStyleSheet(f"""
+            color: {TEXT_MUTED};
+            font-size: 10px;
+            letter-spacing: 3px;
+            margin-top: 28px;
+            font-weight: 700;
+            font-family: 'Inter', sans-serif;
+        """)
+        hint.setAlignment(Qt.AlignCenter)
+        layout.addWidget(hint)
+
+        sub = QLabel("Start a session to activate neural vision")
+        sub.setStyleSheet(f"""
+            color: rgba(51, 78, 104, 0.75);
+            font-size: 10px;
+            margin-top: 8px;
+            font-family: 'Inter', sans-serif;
+        """)
+        sub.setAlignment(Qt.AlignCenter)
+        layout.addWidget(sub)
+
+        layout.addStretch()
+        return w
+
+    # ──────────────────────────────────────────
+    # LLM / AI Composition Panel
+    # ──────────────────────────────────────────
+
+    def _build_llm_panel(self) -> QWidget:
+        """Horizontal AI Composition tile — sits under the camera feed."""
+        panel = _GlassPanel(glow=True, glow_color=ACCENT_VIOLET,
+                            border="none")
+        panel.setFixedHeight(140)
+        panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(12)
+
+        # Center: output area (now full-width minus button)
+        inner = QFrame()
+        inner.setMinimumWidth(200)
+        inner.setMinimumHeight(80)
+        inner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        inner.setStyleSheet(f"""
+            background: rgba(4, 7, 22, 0.65);
+            border-radius: 14px;
+            border: none;
+        """)
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(12, 8, 12, 8)
+        inner_layout.setSpacing(2)
+
+        # Header centered horizontally at top of output area
+        hdr = QHBoxLayout()
+        hdr.setSpacing(6)
+        hdr.addStretch(1)
+        hdr.addWidget(_section_label("AI Composition"), 0, Qt.AlignCenter)
+        hdr.addStretch(1)
+        inner_layout.addLayout(hdr)
+
+        # Status centered horizontally
+        status_row = QHBoxLayout()
+        status_row.addStretch(1)
+        self.llm_status = QLabel("")
+        self.llm_status.setStyleSheet(f"""
+            color: {ACCENT_TEAL};
+            font-size: 9px;
+            font-weight: 800;
+            letter-spacing: 1.4px;
+            font-family: 'Inter', sans-serif;
+        """)
+        status_row.addWidget(self.llm_status)
+        status_row.addStretch(1)
+        inner_layout.addLayout(status_row)
+
+        inner_layout.addStretch(1)
+
+        self.llm_output = QLabel("◆  Awaiting neural synthesis...")
+        self.llm_output.setWordWrap(True)
+        self.llm_output.setAlignment(Qt.AlignCenter)
+        self.llm_output.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.llm_output.setMinimumHeight(60)
+        self.llm_output.setStyleSheet(f"""
+            color: {TEXT_PRIMARY};
+            font-size: 15px;
+            font-weight: 700;
+            line-height: 1.5;
+            font-family: 'Inter', sans-serif;
+            padding: 4px;
+        """)
+        inner_layout.addWidget(self.llm_output, 1, Qt.AlignCenter)
+
+        inner_layout.addStretch(1)
+
+        # Bottom repeat button — inside the output box
+        self.repeat_ai_btn = QPushButton("♪  SPEAK AGAIN")
+        self.repeat_ai_btn.setFixedHeight(32)
+        self.repeat_ai_btn.setCursor(Qt.PointingHandCursor)
+        self.repeat_ai_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(0, 229, 255, 0.10),
+                    stop:1 rgba(139, 92, 246, 0.10));
+                color: {ACCENT_CYAN};
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 1.4px;
+                font-family: 'Inter', sans-serif;
+                border-radius: 16px;
+                border: 1px solid rgba(0, 229, 255, 0.22);
+                padding: 0 22px;
+            }}
+            QPushButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(0, 229, 255, 0.28),
+                    stop:1 rgba(139, 92, 246, 0.28));
+                color: #FFFFFF;
+                border: 1px solid rgba(0, 229, 255, 0.50);
+            }}
+            QPushButton:pressed {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(0, 229, 255, 0.45),
+                    stop:1 rgba(139, 92, 246, 0.45));
+            }}
+            QPushButton:disabled {{
+                background: rgba(255,255,255,0.04);
+                color: rgba(255,255,255,0.20);
+                border: 1px solid rgba(255,255,255,0.06);
+            }}
+        """)
+        self.repeat_ai_btn.clicked.connect(self._speak_with_new_thread)
+        inner_layout.addWidget(self.repeat_ai_btn, 0, Qt.AlignCenter)
+
+        layout.addWidget(inner, 1)
+
+        return panel
+
+    # ──────────────────────────────────────────
+    # Signs / Sequence Panel
+    # ──────────────────────────────────────────
+
+    def _build_signs_panel(self) -> QWidget:
+        panel = _GlassPanel(glow=True, glow_color=ACCENT_GREEN,
+                            border="none")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        # Header
+        hdr = QHBoxLayout()
+        hdr.setSpacing(8)
+        hdr.setAlignment(Qt.AlignVCenter)
+        hdr.setContentsMargins(0, 0, 0, 0)
+
+        icon = QLabel("◉")
+        icon.setStyleSheet(f"color: {ACCENT_GREEN}; font-size: 11px;")
+        hdr.addWidget(icon, 0, Qt.AlignVCenter)
+
+        hdr.addWidget(_section_label("Sign Sequence"), 0, Qt.AlignVCenter)
+        hdr.addStretch(1)
+
+        self.signs_status = QLabel("● ACTIVE")
+        self.signs_status.setStyleSheet(f"""
+            color: {ACCENT_GREEN};
+            font-size: 9px;
+            font-weight: 800;
+            letter-spacing: 1.4px;
+            font-family: 'Inter', sans-serif;
+        """)
+        hdr.addWidget(self.signs_status, 0, Qt.AlignVCenter)
+        layout.addLayout(hdr)
+
+        # Content area — expands to fill card
+        inner = QFrame()
+        inner.setMinimumHeight(80)
+        inner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        inner.setStyleSheet(f"""
+            background: rgba(4, 7, 22, 0.65);
+            border-radius: 14px;
+            border: none;
+        """)
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(16, 16, 16, 16)
+        inner_layout.setSpacing(6)
+
+        self.signs_content = QLabel("◆  Waiting for neural input...")
+        self.signs_content.setWordWrap(True)
+        self.signs_content.setStyleSheet(f"""
+            color: {TEXT_MUTED};
+            font-size: 11px;
+            line-height: 1.4;
+            font-family: 'Inter', sans-serif;
+        """)
+        inner_layout.addWidget(self.signs_content)
+        inner_layout.addStretch(1)
+
+        layout.addWidget(inner, 1)
+
+        # Footer: FPS + clear button
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
+        footer.setAlignment(Qt.AlignVCenter)
+        footer.setContentsMargins(0, 0, 0, 0)
+
+        self.buf_fps = QLabel("BUFFER ▸ 00 FPS")
+        self.buf_fps.setStyleSheet(f"""
+            color: {TEXT_MUTED};
+            font-size: 9px;
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+        """)
+        footer.addWidget(self.buf_fps, 0, Qt.AlignVCenter)
+        footer.addStretch(1)
+
+        # Local buffer clear — small, borderless
+        buf_clear = QPushButton("⌫")
+        buf_clear.setFixedSize(26, 26)
+        buf_clear.setCursor(Qt.PointingHandCursor)
+        buf_clear.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(255, 255, 255, 0.04);
+                color: {TEXT_MUTED};
+                border-radius: 13px;
+                font-size: 11px;
+                border: none;
+                font-family: 'Inter', sans-serif;
+            }}
+            QPushButton:hover {{
+                background: rgba(255, 255, 255, 0.10);
+                color: {TEXT_SECONDARY};
+            }}
+        """)
+        buf_clear.clicked.connect(self._clear_all)
+        footer.addWidget(buf_clear, 0, Qt.AlignVCenter)
+        layout.addLayout(footer)
+
+        return panel
+
+    # ──────────────────────────────────────────
+    # Voice Synthesis Panel (expanded & centered)
+    # ──────────────────────────────────────────
+
+    def _build_voice_panel(self) -> QWidget:
+        panel = _GlassPanel(glow=True, glow_color=ACCENT_CYAN,
+                            border="none")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        # Header
+        hdr = QHBoxLayout()
+        hdr.setSpacing(8)
+        hdr.setAlignment(Qt.AlignVCenter)
+        hdr.setContentsMargins(0, 0, 0, 0)
+
+        icon = QLabel("♪")
+        icon.setStyleSheet(f"color: {ACCENT_CYAN}; font-size: 13px;")
+        hdr.addWidget(icon, 0, Qt.AlignVCenter)
+
+        hdr.addWidget(_section_label("Voice Synthesis"), 0, Qt.AlignVCenter)
+        hdr.addStretch(1)
+
+        self.voice_status = QLabel("● READY")
+        self.voice_status.setStyleSheet(f"""
+            color: {ACCENT_GREEN};
+            font-size: 9px;
+            font-weight: 800;
+            letter-spacing: 1.4px;
+            font-family: 'Inter', sans-serif;
+        """)
+        hdr.addWidget(self.voice_status, 0, Qt.AlignVCenter)
+        layout.addLayout(hdr)
+
+        # Content area — text display (bigger, bolder) instead of visualizer
+        inner = QFrame()
+        inner.setMinimumHeight(60)
+        inner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        inner.setStyleSheet(f"""
+            background: rgba(4, 7, 22, 0.55);
+            border-radius: 14px;
+            border: none;
+        """)
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(16, 14, 16, 14)
+        inner_layout.setSpacing(8)
+
+        # [CHANGED] — Bigger, bolder text for STT output (now clickable)
+        self.voice_content = ClickableLabel("◆  Tap the button to record voice")
+        self.voice_content.setWordWrap(True)
+        self.voice_content.setAlignment(Qt.AlignCenter)
+        self.voice_content.setStyleSheet(f"""
+            color: {TEXT_PRIMARY};
+            font-size: 16px;
+            font-weight: 700;
+            line-height: 1.4;
+            font-family: 'Inter', sans-serif;
+        """)
+        inner_layout.addWidget(self.voice_content, 1, Qt.AlignCenter)
+
+        # [CHANGED] — Visualizer removed; text takes full space
+        layout.addWidget(inner, 1)
+
+        # Footer — centered record button
+        footer = QVBoxLayout()
+        footer.setSpacing(10)
+        footer.setAlignment(Qt.AlignCenter)
+        footer.setContentsMargins(0, 4, 0, 0)
+
+        # [CHANGED] — Record button with recording state styling
+        record_row = QHBoxLayout()
+        record_row.setAlignment(Qt.AlignCenter)
+        self.record_btn = _PillButton("RECORD VOICE", "primary")
+        self.record_btn.setMinimumWidth(140)
+        record_row.addWidget(self.record_btn)
+        footer.addLayout(record_row)
+
+        layout.addLayout(footer)
+        return panel
+
+    # ──────────────────────────────────────────
+    # AI Control Center Footer (fills bottom space)
+    # ──────────────────────────────────────────
+
+    def _build_ai_control_center(self) -> QWidget:
+        """Unified footer panel: action buttons + live neural feedback stream."""
+        panel = _GlassPanel(glow=True, glow_color=ACCENT_CYAN, border="none")
+        panel.setFixedHeight(96)
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(20, 14, 20, 14)
+        layout.setSpacing(16)
+        layout.setAlignment(Qt.AlignVCenter)
+
+        # Left spacer — pushes buttons to center
+        layout.addStretch(1)
+
+        # Center — action buttons
+        actions = QHBoxLayout()
+        actions.setSpacing(12)
+        actions.setAlignment(Qt.AlignVCenter)
+
+        self.start_btn = _PillButton("START SESSION", "danger")
+        self.start_btn.setMinimumWidth(168)
+        actions.addWidget(self.start_btn)
+
+        self.create_btn = _PillButton("CREATE SENTENCE", "primary")
+        self.create_btn.setMinimumWidth(178)
+        actions.addWidget(self.create_btn)
+
+        self.clear_output_btn = _PillButton("CLEAR OUTPUT", "primary")
+        self.clear_output_btn.setMinimumWidth(178)
+        actions.addWidget(self.clear_output_btn)
+
+        # [CHANGED] — Text updated to "Alphabet Mode"; _HeroButton is already a toggle
+        self.mode_btn = _HeroButton("Alphabet Mode")
+        actions.addWidget(self.mode_btn)
+
+        layout.addLayout(actions)
+
+        # Right spacer — balances left stretch to keep buttons centered
+        layout.addStretch(1)
+
+        return panel
+
+    # ──────────────────────────────────────────
+    # Signal Wiring
+    # ──────────────────────────────────────────
+
+    def _wire_signals(self):
+        self.start_btn.clicked.connect(self._toggle_session)
+        self.create_btn.clicked.connect(self._create_sentence)
+        self.clear_output_btn.clicked.connect(self._clear_output)
+        self.mode_btn.clicked.connect(self._on_mode_alphabet)
+
+        self.record_btn.clicked.connect(self._start_stt)
+        # [CHANGED] — Clickable voice text dialog
+        self.voice_content.clicked.connect(self._show_voice_text_dialog)
+
+
+    # ──────────────────────────────────────────
+    # Status Helpers
+    # ──────────────────────────────────────────
+
+    def _set_signs_status(self, text: str, variant: str):
+        color_map = {
+            "success": ACCENT_GREEN,
+            "warning": "#FFB74D",
+            "danger":  "#FF5252",
+        }
+        color = color_map.get(variant, ACCENT_CYAN)
+        self.signs_status.setText(f"● {text.upper()}")
+        self.signs_status.setStyleSheet(
+            f"color: {color}; font-size: 9px; font-weight: 800; "
+            f"letter-spacing: 1.4px; font-family: 'Inter', sans-serif;")
+
+    def _set_voice_status(self, text: str, variant: str):
+        color_map = {
+            "success": ACCENT_GREEN,
+            "warning": "#FFB74D",
+            "danger":  "#FF5252",
+        }
+        color = color_map.get(variant, ACCENT_CYAN)
+        self.voice_status.setText(f"● {text.upper()}")
+        self.voice_status.setStyleSheet(
+            f"color: {color}; font-size: 9px; font-weight: 800; "
+            f"letter-spacing: 1.4px; font-family: 'Inter', sans-serif;")
+
+    def _set_live_label(self, status: str, variant: str):
+        if status == "running":
+            self.start_btn.setText("STOP SESSION")
+            self.start_btn._variant = "danger"
+            self.start_btn._update_style()
+        elif status == "error":
+            pass
+        else:
+            self.start_btn.setText("▶  START SESSION")
+            self.start_btn._variant = "danger"
+            self.start_btn._update_style()
+
+    def _reset_pred_label(self):
+        if hasattr(self, 'detected_sign_value'):
+            self.detected_sign_value.setText("—")
+            self.detected_sign_value.setStyleSheet(f"""
+                color: {ACCENT_CYAN};
+                font-size: 26px;
+                font-weight: 800;
+                font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            """)
+        if hasattr(self, 'confidence_overlay'):
+            self.confidence_overlay.hide()
+        if hasattr(self, 'current_word'):
+            self.current_word.setText("Predicted word  →")
+        if hasattr(self, 'detected_sign_value'):
+            self.detected_sign_value.setText("—")
+        # Clear word history
+        if hasattr(self, '_word_history_layout') and self._word_history_layout:
+            while self._word_history_layout.count():
+                item = self._word_history_layout.takeAt(0)
+                if item and item.widget():
+                    item.widget().deleteLater()
+        self._last_history_word = None
+
+    # ──────────────────────────────────────────
+    # Backend Binding
+    # ──────────────────────────────────────────
+
+    def set_backend(self, backend):
+        self._backend = backend
+        backend.frame_ready.connect(self._on_frame_ready)
+        backend.sign_predicted.connect(self._on_sign_predicted)
+        backend.fps_updated.connect(self._on_fps_updated)
+        backend.sentence_updated.connect(self._on_sentence_updated)
+        backend.llm_sentence_ready.connect(self._on_llm_ready)
+        backend.tts_spoke.connect(self._on_tts_spoke)
+        backend.status_changed.connect(self._on_status_changed)
+        backend.error_occurred.connect(self._on_error)
+        backend.stt_text_ready.connect(self._on_stt_text_ready)
+        backend.stt_listening.connect(self._on_stt_listening)
+        backend.stt_error.connect(self._on_stt_error)
+
+        # [CHANGED] — Alphabet engine wiring
+        self._alphabet_engine = AlphabetInferenceEngine(self)
+        self._alphabet_engine.frame_ready.connect(self._on_alphabet_frame)
+        self._alphabet_engine.sign_predicted.connect(self._on_alphabet_sign)
+        self._alphabet_engine.sentence_updated.connect(self._on_alphabet_sentence)
+        self._alphabet_engine.word_completed.connect(self._on_alphabet_word_completed)
+        self._alphabet_engine.status_changed.connect(self._on_alphabet_status)
+        self._alphabet_engine.error_occurred.connect(self._on_error)
+        self._alphabet_engine.fps_updated.connect(self._on_fps_updated)
+
+    # ──────────────────────────────────────────
+    # Backend Callbacks (logic UNCHANGED)
+    # ──────────────────────────────────────────
+
+    def _on_frame_ready(self, pixmap: QPixmap):
+        self._camera_label.setPixmap(pixmap)
+        self._cam_stack.setCurrentIndex(1)
+
+    def _on_sign_predicted(self, sign: str, conf: float):
+        is_conf = conf >= self.AUTO_ADD_CONFIDENCE
+        color   = ACCENT_GREEN if is_conf else TEXT_SECONDARY
+        display = sign.upper() if sign not in self._NOISE_SIGNS else "—"
+        self.detected_sign_value.setText(display)
+        self.detected_sign_value.setStyleSheet(
+            f"color: {color}; font-size: 26px; font-weight: 800; "
+            f"font-family: 'JetBrains Mono', 'Fira Code', monospace;")
+        if hasattr(self, 'confidence_overlay'):
+            if sign not in self._NOISE_SIGNS:
+                self.confidence_overlay.setText(f"{int(conf * 100)}%")
+                self.confidence_overlay.show()
+                self._update_conf_overlay_geometry()
+            else:
+                self.confidence_overlay.hide()
+        if sign not in self._NOISE_SIGNS:
+            self.detected_sign_value.setText(sign.upper())
+            if is_conf:
+                self._add_word_to_history(sign)
+        if (is_conf and sign not in self._NOISE_SIGNS and
+                self._auto_add_enabled and self._session_active):
+            self._try_auto_add(sign)
+
+    def _add_word_to_history(self, sign: str):
+        """Append a correct prediction to the scrollable history (max 6).
+
+        Deduplication: a word is only written once consecutively.
+        It can re-appear only after a different word has been written.
+        """
+        if not hasattr(self, '_word_history_layout') or not self._word_history_layout:
+            return
+
+        sign_upper = sign.upper()
+
+        # Skip if same as the last written history word
+        if self._last_history_word == sign_upper:
+            return
+
+        self._last_history_word = sign_upper
+
+        entry = QLabel(f"USER: {sign_upper}")
+        entry.setStyleSheet(f"""
+            color: {ACCENT_CYAN};
+            font-size: 16px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            padding: 2px 0;
+        """)
+        self._word_history_layout.addWidget(entry)
+        # Keep only last 6
+        while self._word_history_layout.count() > 6:
+            item = self._word_history_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+    def _try_auto_add(self, sign: str):
+        now = int(time.time() * 1000)
+        if (self._last_auto_added_sign == sign and
+                (now - self._last_auto_added_time) < self.AUTO_ADD_COOLDOWN_MS):
+            return
+        self._last_auto_added_sign = sign
+        self._last_auto_added_time = now
+        if self._backend:
+            self._backend.add_word()
+
+    def _on_fps_updated(self, fps: float):
+        s = f"{fps:.0f}"
+        self.buf_fps.setText(f"BUFFER ▸ {s} FPS")
+
+    def _on_sentence_updated(self, sentence: str):
+        if sentence:
+            self.signs_content.setText(f"◆  {sentence}")
+            self._set_signs_status("Ready", "success")
+        else:
+            self.signs_content.setText("◆  Waiting for neural input...")
+            self.current_word.setText("Predicted word  →")
+        self.detected_sign_value.setText("—")
+        self._set_signs_status("Ready", "success")
+
+    def _on_llm_ready(self, sentence: str):
+        self._last_llm_sentence = sentence   # cache locally — repeat button reads this
+        self.llm_output.setText(sentence)
+        self.llm_status.setText("")
+
+    def _on_tts_spoke(self, text: str):
+        self.voice_content.setText("Speaking")
+        self.voice_content.setStyleSheet(f"""
+            color: {TEXT_PRIMARY};
+            font-size: 18px;
+            font-weight: 800;
+            font-family: 'Inter', sans-serif;
+        """)
+        self._set_voice_status("Speaking", "success")
+        QTimer.singleShot(3000, lambda: self._reset_voice_content())
+
+    def _on_status_changed(self, status: str):
+        if status == "running":
+            self._session_active = True
+            self._set_live_label("running", "success")
+            self._set_signs_status("Active", "warning")
+        elif status == "error":
+            self._session_active = False
+            self._set_live_label("error", "danger")
+            self._set_signs_status("Error", "danger")
+        else:
+            self._session_active = False
+            self._set_live_label("standby", "muted")
+            self._cam_stack.setCurrentIndex(0)
+            self._reset_pred_label()
+            self._set_signs_status("Ready", "success")
+
+    def _on_error(self, msg: str):
+        self.signs_content.setText(f"◆  Error: {msg}")
+        self.signs_content.setStyleSheet("color: #FF5252; font-size: 11px;")
+
+    # [CHANGED] — Toggle-aware STT start/stop
+    def _start_stt(self):
+        if not self._backend:
+            self.voice_content.setText("◆  Backend not connected")
+            return
+        if self._stt_recording:
+            self._stt_manual_stop = True
+            if hasattr(self._backend, 'stop_listening'):
+                self._backend.stop_listening()
+        else:
+            self._stt_manual_stop = False
+            self._backend.start_listening()
+
+    # [CHANGED] — Updated STT callbacks for new button text and bigger text display
+    # [CHANGED] — Removed 4-second auto-reset timer; text persists until next recording
+    def _on_stt_text_ready(self, text: str):
+        self.voice_content.setText(f'"{text}"')
+        self.voice_content.setStyleSheet(f"""
+            color: {ACCENT_CYAN};
+            font-size: 18px;
+            font-weight: 800;
+            line-height: 1.4;
+            font-family: 'Inter', sans-serif;
+        """)
+        self._set_voice_status("Ready", "success")
+
+    def _on_stt_listening(self, listening: bool):
+        if listening:
+            self._stt_recording = True
+            # [CHANGED] — Button shows "STOP RECORDING" in red when active, stays enabled
+            self.record_btn.setText("STOP RECORDING")
+            self.record_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(255, 82, 82, 0.15);
+                    color: #FF5252;
+                    font-family: 'Inter', 'SF Pro Text', sans-serif;
+                    font-weight: 700;
+                    font-size: 11px;
+                    letter-spacing: 1.5px;
+                    border-radius: 22px;
+                    padding: 0 26px;
+                    border: 1px solid rgba(255, 82, 82, 0.30);
+                }}
+                QPushButton:hover {{
+                    background: rgba(255, 82, 82, 0.25);
+                }}
+                QPushButton:pressed {{
+                    background: rgba(255, 82, 82, 0.35);
+                }}
+            """)
+            self.voice_content.setText("Listening... speak now")
+            self.voice_content.setStyleSheet(f"""
+                color: {ACCENT_CYAN};
+                font-size: 16px;
+                font-weight: 700;
+                font-family: 'Inter', sans-serif;
+            """)
+            self._set_voice_status("Recording", "warning")
+        else:
+            self._stt_recording = False
+            self.record_btn.setText("RECORD VOICE")
+            self.record_btn._variant = "primary"
+            self.record_btn._update_style()
+            self._set_voice_status("Ready", "success")
+
+    # [CHANGED] — Removed 4-second auto-reset timer; error text persists until next recording
+    def _on_stt_error(self, msg: str):
+        self.voice_content.setText(f"STT: {msg}")
+        self.voice_content.setStyleSheet(f"""
+            color: #FF5252;
+            font-size: 16px;
+            font-weight: 700;
+            font-family: 'Inter', sans-serif;
+        """)
+        self.record_btn.setText("RECORD VOICE")
+        self.record_btn._variant = "primary"
+        self.record_btn._update_style()
+        self.record_btn.setEnabled(True)
+        self._set_voice_status("Ready", "success")
+
+    # [CHANGED] — Helper to reset voice content to default state
+    def _reset_voice_content(self):
+        self.voice_content.setText("◆  Tap microphone to transcribe speech")
+        self.voice_content.setStyleSheet(f"""
+            color: {TEXT_PRIMARY};
+            font-size: 16px;
+            font-weight: 700;
+            line-height: 1.4;
+            font-family: 'Inter', sans-serif;
+        """)
+
+    # [CHANGED] — Mode-aware toggle
+    def _toggle_session(self):
+        if self._mode == "ALPHABET":
+            if not self._alphabet_engine:
+                self.signs_content.setText("◆  Alphabet engine not initialized")
+                return
+            if self._alphabet_engine.is_running():
+                self._alphabet_engine.stop()
+                self.session_stopped.emit()
+            else:
+                self._alphabet_engine.start()
+                self.session_started.emit()
+        else:
+            if not self._backend:
+                self.signs_content.setText("◆  Backend not initialized")
+                return
+            if not self._session_active:
+                self._backend.start_session()
+                self.session_started.emit()
+            else:
+                self._backend.stop_session()
+                self.session_stopped.emit()
+
+    def _create_sentence(self):
+        if self._backend:
+            self.llm_status.setText("◆  THINKING...")
+            self._backend.generate_sentence()
+
+    def _clear_output(self):
+        """Clear LLM composition output and predicted word outputs."""
+        self._last_llm_sentence = ""
+        self.llm_output.setText("◆  Awaiting neural synthesis...")
+        self.llm_status.setText("")
+        self.current_word.setText("Predicted word  →")
+        self.detected_sign_value.setText("—")
+        if hasattr(self, 'confidence_overlay'):
+            self.confidence_overlay.hide()
+        # Clear word history
+        if hasattr(self, '_word_history_layout') and self._word_history_layout:
+            while self._word_history_layout.count():
+                item = self._word_history_layout.takeAt(0)
+                if item and item.widget():
+                    item.widget().deleteLater()
+        self._last_history_word = None
+
+    def _speak_sentence(self):
+        if not self._backend:
+            return
+        if self._backend.llm_sentence:
+            self._backend.repeat_last()
+        elif self._backend.detected_words:
+            self._backend.speak_raw_words()
+        else:
+            self.voice_content.setText("◆  Nothing to speak yet")
+            QTimer.singleShot(3000, lambda: self._reset_voice_content())
+
+    def _repeat_sentence(self):
+        if self._backend:
+            self._backend.repeat_last()
+
+    # [FIXED] — Uses local _last_llm_sentence cache (independent of backend state)
+    # and calls TTS with the sentence text directly so repeat always works.
+    def _speak_with_new_thread(self):
+        """Speak last LLM sentence via SpeakThread — independent of TTSEngine."""
+        sentence = self._last_llm_sentence
+        if not sentence:
+            self.llm_output.setText("◆  No sentence to speak yet")
+            QTimer.singleShot(2000, lambda: self.llm_output.setText(
+                "◆  Awaiting neural synthesis..."))
+            return
+
+        # If a previous thread is still alive, let it finish (don't kill it)
+        if self._speak_thread is not None and self._speak_thread.isRunning():
+            return  # already speaking — ignore the click
+
+        self._speak_thread = SpeakThread(sentence, parent=self)
+        self._speak_thread.done.connect(self._on_speak_done)
+        self._speak_thread.error.connect(self._on_speak_error)
+
+        self.repeat_ai_btn.setEnabled(False)
+        self.repeat_ai_btn.setText("♪  Speaking...")
+        self.voice_content.setText("♪  Speaking...")
+        self.voice_content.setStyleSheet(f"""
+            color: {ACCENT_CYAN};
+            font-size: 18px;
+            font-weight: 800;
+            font-family: 'Inter', sans-serif;
+        """)
+        self._set_voice_status("Speaking", "success")
+        self._speak_thread.start()
+
+    def _on_speak_done(self):
+        self.repeat_ai_btn.setEnabled(True)
+        self.repeat_ai_btn.setText("♪  SPEAK AGAIN")
+        self._set_voice_status("Ready", "success")
+        QTimer.singleShot(1500, lambda: self._reset_voice_content())
+
+    def _on_speak_error(self, err: str):
+        print(f"[SpeakThread] error: {err}")
+        self.repeat_ai_btn.setEnabled(True)
+        self.repeat_ai_btn.setText("♪  SPEAK AGAIN")
+        self.voice_content.setText(f"◆  TTS error: {err}")
+        QTimer.singleShot(3000, lambda: self._reset_voice_content())
+
+    # [CHANGED] — Mode switch handler
+    def _on_mode_alphabet(self):
+        if self.mode_btn.isChecked():
+            self._mode = "ALPHABET"
+            self.llm_output.setText("◆  Alphabet mode — spell letter by letter")
+            if self._backend:
+                self._backend.stop_session()
+            if self._alphabet_engine and not self._alphabet_engine.is_running():
+                self._alphabet_engine.start()
+        else:
+            self._mode = "WORDS"
+            self.llm_output.setText("◆  Awaiting neural synthesis...")
+            if self._alphabet_engine:
+                self._alphabet_engine.stop()
+            self._set_live_label("standby", "muted")
+            self._cam_stack.setCurrentIndex(0)
+            self._reset_pred_label()
+
+    # [CHANGED] — Mode-aware clear
+    def _clear_all(self):
+        if self._backend and self._mode != "ALPHABET":
+            self._backend.clear_words()
+        if self._alphabet_engine and self._mode == "ALPHABET":
+            self._alphabet_engine.clear_text()
+        self._detected_signs.clear()
+        self.signs_content.setText("◆  Waiting for neural input...")
+        self.current_word.setText("Predicted word  →")
+        self.detected_sign_value.setText("—")
+        # Clear word history
+        if hasattr(self, '_word_history_layout') and self._word_history_layout:
+            while self._word_history_layout.count():
+                item = self._word_history_layout.takeAt(0)
+                if item and item.widget():
+                    item.widget().deleteLater()
+        self._last_history_word = None
+        self._last_llm_sentence = ""
+        self.llm_output.setText("◆  Awaiting neural synthesis...")
+        self.voice_content.setText("◆  Tap microphone to synthesize speech")
+        self.llm_status.setText("")
+        self._last_auto_added_sign = None
+        self._last_auto_added_time = 0
+        self._stt_recording = False
+        self._stt_manual_stop = False
+        self._reset_pred_label()
+
+    def _export(self, fmt: str):
+        if not self._backend or not self._backend.detected_words:
+            self.signs_content.setText("◆  No signs to export")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, f"Export {fmt.upper()}",
+            f"session.{fmt}", f"{fmt.upper()} files (*.{fmt})")
+        if not path:
+            return
+        try:
+            if fmt == "txt":
+                self._backend.export_txt(path)
+            else:
+                self._backend.export_srt(path)
+            self.export_requested.emit(fmt)
+            self.signs_content.setText(f"◆  Exported → {path}")
+        except Exception as exc:
+            self._on_error(str(exc))
+
+    # ──────────────────────────────────────────
+    # [CHANGED] — Voice Text Dialog (NEW METHOD)
+    # ──────────────────────────────────────────
+
+    def _show_voice_text_dialog(self):
+        """Open a themed dialog showing the full voice synthesis output text."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Voice Synthesis Output")
+        dialog.setMinimumSize(520, 340)
+        dialog.setStyleSheet(f"""
+            QDialog {{
+                background: {BG_DEEP};
+                border: 1px solid {BORDER_CYAN};
+                border-radius: 18px;
+            }}
+            QTextEdit {{
+                background: {BG_INNER};
+                color: {TEXT_PRIMARY};
+                border: none;
+                border-radius: 12px;
+                padding: 14px;
+                font-family: 'Inter', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }}
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {ACCENT_CYAN}, stop:1 {ACCENT_GREEN});
+                color: #060A1E;
+                border: none;
+                border-radius: 12px;
+                padding: 10px 28px;
+                font-weight: 700;
+                font-size: 11px;
+                letter-spacing: 1.2px;
+                font-family: 'Inter', sans-serif;
+            }}
+            QPushButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #40EEFF, stop:1 #40FFD8);
+            }}
+            QPushButton:pressed {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #00BACE, stop:1 #00C9A0);
+            }}
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(18)
+
+        # Header
+        header = QLabel("◈  FULL VOICE OUTPUT")
+        header.setStyleSheet(f"""
+            color: {ACCENT_CYAN};
+            font-size: 14px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            font-family: 'Inter', sans-serif;
+        """)
+        header.setAlignment(Qt.AlignCenter)
+        layout.addWidget(header)
+
+        # Scrollable text area
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setPlainText(self.voice_content.text())
+        layout.addWidget(text_edit, 1)
+
+        # Close button
+        close_btn = QPushButton("CLOSE")
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn, 0, Qt.AlignCenter)
+
+        dialog.exec()
+
+    # ──────────────────────────────────────────
+    # [CHANGED] — Alphabet Engine Handlers (NEW METHODS)
+    # ──────────────────────────────────────────
+
+    def _on_alphabet_frame(self, frame: np.ndarray):
+        """Convert OpenCV BGR frame → QPixmap and display in camera widget."""
+        if frame is None:
+            return
+        h, w, ch = frame.shape
+        bytes_per_line = ch * w
+        rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(qt_image)
+        self._on_frame_ready(pixmap)
+
+    def _on_alphabet_sign(self, sign: str, conf: float):
+        """Show detected letter in the Live Detection strip."""
+        is_conf = conf >= self.AUTO_ADD_CONFIDENCE
+        color   = ACCENT_GREEN if is_conf else TEXT_SECONDARY
+        display = sign.upper() if sign not in self._NOISE_SIGNS else "—"
+        self.detected_sign_value.setText(display)
+        self.detected_sign_value.setStyleSheet(
+            f"color: {color}; font-size: 26px; font-weight: 800; "
+            f"font-family: 'JetBrains Mono', 'Fira Code', monospace;")
+        if sign not in self._NOISE_SIGNS:
+            self.detected_sign_value.setText(sign.upper())
+            if is_conf:
+                self._add_word_to_history(sign)
+            if hasattr(self, 'confidence_overlay'):
+                self.confidence_overlay.setText(f"{int(conf * 100)}%")
+                self.confidence_overlay.show()
+                self._update_conf_overlay_geometry()
+        else:
+            if hasattr(self, 'confidence_overlay'):
+                self.confidence_overlay.hide()
+
+    def _on_alphabet_sentence(self, word: str):
+        """Live word being built from letters — shown in AI Composition panel."""
+        if word:
+            self.llm_output.setText(f"◆  {word}")
+        else:
+            self.llm_output.setText("◆  Alphabet mode — spell letter by letter")
+
+    def _on_alphabet_word_completed(self, word: str):
+        """When SPACE gesture is confirmed in alphabet mode."""
+        self.llm_output.setText(f"◆  Word completed: {word}")
+        self.voice_content.setText(f'◆  Speaking: "{word}"')
+        QTimer.singleShot(3000, lambda: self.voice_content.setText(
+            "◆  Tap the button to record voice"))
+
+    def _on_alphabet_status(self, status: str):
+        if status == "running":
+            self._session_active = True
+            self._set_live_label("running", "success")
+            self.start_btn.setText("⏹  STOP SESSION")
+            self.start_btn._variant = "danger"
+            self.start_btn._update_style()
+            self.llm_output.setText("◆  Alphabet mode — spell letter by letter")
+        elif status == "error":
+            self._session_active = False
+            self._set_live_label("error", "danger")
+        else:
+            self._session_active = False
+            self._set_live_label("standby", "muted")
+            self.start_btn.setText("▶  START SESSION")
+            self.start_btn._variant = "danger"
+            self.start_btn._update_style()
+            self._cam_stack.setCurrentIndex(0)
+            self._reset_pred_label()
+
+    # ──────────────────────────────────────────
+    # Public API
+    # ──────────────────────────────────────────
+
+    def add_detected_sign(self, sign: str):
+        self._detected_signs.append(sign)
+        self.signs_content.setText(f"◆  {' '.join(self._detected_signs)}")
+        self.current_word.setText(f'▸  "{sign.upper()}"')
+        self.detected_sign_value.setText(sign.upper())
+
+    # [CHANGED] — Mode-aware refresh
+    def refresh(self):
+        self._session_active = False
+        self._detected_signs.clear()
+        self.signs_content.setText("◆  Waiting for neural input...")
+        self.current_word.setText("Predicted word  →")
+        self.detected_sign_value.setText("—")
+        # Clear word history
+        if hasattr(self, '_word_history_layout') and self._word_history_layout:
+            while self._word_history_layout.count():
+                item = self._word_history_layout.takeAt(0)
+                if item and item.widget():
+                    item.widget().deleteLater()
+        self._last_history_word = None
+        self.start_btn.setText("▶  START SESSION")
+        self._reset_pred_label()
+        self.llm_output.setText("◆  Awaiting neural synthesis...")
+        self.voice_content.setText("◆  Tap microphone to synthesize speech")
+        self.llm_status.setText("")
+        self._last_auto_added_sign = None
+        self._last_auto_added_time = 0
+        self._stt_recording = False
+        self._stt_manual_stop = False
+        if self._backend:
+            self._backend.stop_session()
+        if self._alphabet_engine:
+            self._alphabet_engine.stop()
+        self.mode_btn.setChecked(False)
+        self._mode = "WORDS"

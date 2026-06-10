@@ -1,0 +1,1071 @@
+"""
+SignBridge Studio — Sign Bridge Backend Engine
+================================================
+Qt-compatible wrapper around the ASL inference pipeline.
+"""
+
+import os
+import sys
+import json
+import time
+import math
+import threading
+import warnings
+from collections import deque
+from pathlib import Path
+from typing import Optional, List
+
+import numpy as np
+
+# ── Qt imports ───────────────────────────────────────────────────────────────
+from PySide6.QtCore import QObject, Signal, Slot, QThread
+from PySide6.QtGui import QImage, QPixmap
+
+# ── OpenCV ───────────────────────────────────────────────────────────────────
+import cv2
+
+# ── PyTorch ──────────────────────────────────────────────────────────────────
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# ── MediaPipe TASKS (new API) ────────────────────────────────────────────────
+try:
+    from mediapipe.tasks import python as mp_tasks
+    from mediapipe.tasks.python import vision as mp_vision
+    from mediapipe.tasks.python.components import containers as mp_containers
+    import mediapipe as mp
+    MEDIAPIPE_OK = True
+except ImportError as e:
+    MEDIAPIPE_OK = False
+    print(f"❌ MediaPipe import error: {e}")
+
+# ── LLM backend: Groq ────────────────────────────────────────────────────────
+try:
+    from groq import Groq
+    GROQ_OK = True
+except ImportError:
+    GROQ_OK = False
+
+# ── TTS ──────────────────────────────────────────────────────────────────────
+TTS_ENGINE = None
+try:
+    import pyttsx3
+    TTS_ENGINE = "pyttsx3"
+except ImportError:
+    pass
+
+if TTS_ENGINE is None:
+    try:
+        import subprocess
+        subprocess.run(["espeak", "--version"], capture_output=True, check=True)
+        TTS_ENGINE = "espeak"
+    except Exception:
+        pass
+
+# ── STT ──────────────────────────────────────────────────────────────────────
+STT_ENGINE = None
+try:
+    import speech_recognition as sr
+    STT_ENGINE = "speech_recognition"
+except ImportError:
+    pass
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  CONFIG (must match training)
+# ═════════════════════════════════════════════════════════════════════════════
+MAX_LEN           = 128
+ROWS_PER_FRAME    = 543
+NUM_CLASSES       = 100
+CONFIDENCE_THRESH = 0.55
+SMOOTH_WINDOW     = 5
+PAD_VAL           = 0.0
+
+# Landmark indices
+LIP   = [0,61,185,40,39,37,267,269,270,409,291,146,91,181,84,17,
+         314,405,321,375,78,191,80,81,82,13,312,311,310,415,95,
+         88,178,87,14,317,402,318,324,308]
+NOSE  = [1,2,98,327]
+REYE  = [33,7,163,144,145,153,154,155,133,246,161,160,159,158,157,173]
+LEYE  = [263,249,390,373,374,380,381,382,362,466,388,387,386,385,384,398]
+LHAND = list(range(468, 489))
+RHAND = list(range(522, 543))
+
+POINT_LANDMARKS = LIP + LHAND + RHAND + NOSE + REYE + LEYE
+NUM_NODES       = len(POINT_LANDMARKS)
+CHANNELS        = 708
+
+# Hand connections for drawing
+HAND_CONNECTIONS = [
+    (0,1),(1,2),(2,3),(3,4),
+    (0,5),(5,6),(6,7),(7,8),
+    (0,9),(9,10),(10,11),(11,12),
+    (0,13),(13,14),(14,15),(15,16),
+    (0,17),(17,18),(18,19),(19,20),
+    (5,9),(9,13),(13,17),
+]
+
+FACE_CONTOUR_CONNECTIONS = [
+    (61,146),(146,91),(91,181),(181,84),(84,17),(17,314),(314,405),
+    (405,321),(321,375),(375,291),(61,185),(185,40),(40,39),(39,37),
+    (37,267),(267,269),(269,270),(270,409),(409,291),
+    (33,7),(7,163),(163,144),(144,145),(145,153),(153,154),(154,155),(155,133),
+    (33,246),(246,161),(161,160),(160,159),(159,158),(158,157),(157,173),(173,133),
+    (263,249),(249,390),(390,373),(373,374),(374,380),(380,381),(381,382),(382,362),
+    (263,466),(466,388),(388,387),(387,386),(386,385),(385,384),(384,398),(398,362),
+    (1,2),(2,98),(98,327),(327,2),
+]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  MODEL ARCHITECTURE (identical to notebook)
+# ═════════════════════════════════════════════════════════════════════════════
+class ECA(nn.Module):
+    def __init__(self, kernel_size=5):
+        super().__init__()
+        self.conv = nn.Conv1d(1, 1, kernel_size, padding=kernel_size//2, bias=False)
+    def forward(self, x):
+        gap   = x.mean(dim=1, keepdim=True)
+        scale = torch.sigmoid(self.conv(gap))
+        return x * scale
+
+class CausalDWConv1D(nn.Module):
+    def __init__(self, channels, kernel_size=17, dilation=1):
+        super().__init__()
+        self.pad_len = (kernel_size - 1) * dilation
+        self.conv    = nn.Conv1d(channels, channels, kernel_size=kernel_size,
+                                 dilation=dilation, groups=channels, padding=0, bias=False)
+    def forward(self, x):
+        x = x.permute(0, 2, 1)
+        x = F.pad(x, (self.pad_len, 0))
+        x = self.conv(x)
+        return x.permute(0, 2, 1)
+
+class Conv1DBlock(nn.Module):
+    def __init__(self, dim, kernel_size=17, expand_ratio=2, drop_rate=0.2):
+        super().__init__()
+        expanded     = dim * expand_ratio
+        self.expand  = nn.Linear(dim, expanded)
+        self.act     = nn.SiLU()
+        self.dwconv  = CausalDWConv1D(expanded, kernel_size)
+        self.bn      = nn.BatchNorm1d(expanded)
+        self.eca     = ECA()
+        self.project = nn.Linear(expanded, dim)
+        self.drop    = nn.Dropout(drop_rate) if drop_rate > 0 else nn.Identity()
+    def forward(self, x):
+        h = self.act(self.expand(x))
+        h = self.dwconv(h)
+        h = self.bn(h.permute(0, 2, 1)).permute(0, 2, 1)
+        h = self.eca(h)
+        h = self.drop(self.project(h))
+        return x + h
+
+class MHSA(nn.Module):
+    def __init__(self, dim, num_heads=4, dropout=0.1):
+        super().__init__()
+        self.H     = num_heads
+        self.D     = dim // num_heads
+        self.scale = self.D ** -0.5
+        self.qkv   = nn.Linear(dim, 3 * dim, bias=False)
+        self.proj  = nn.Linear(dim, dim, bias=False)
+        self.drop  = nn.Dropout(dropout)
+    def forward(self, x, key_mask=None):
+        B, T, C = x.shape
+        qkv = self.qkv(x).reshape(B, T, 3, self.H, self.D).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        if key_mask is not None:
+            attn = attn.masked_fill(~key_mask[:, None, None, :], -1e4)
+        attn = self.drop(F.softmax(attn, dim=-1))
+        out  = (attn @ v).permute(0, 2, 1, 3).reshape(B, T, C)
+        return self.proj(out)
+
+class TransformerBlock(nn.Module):
+    def __init__(self, dim, num_heads=4, expand=2, attn_drop=0.1, ffn_drop=0.1):
+        super().__init__()
+        self.bn1   = nn.BatchNorm1d(dim)
+        self.attn  = MHSA(dim, num_heads, attn_drop)
+        self.drop1 = nn.Dropout(ffn_drop)
+        self.bn2   = nn.BatchNorm1d(dim)
+        self.ffn   = nn.Sequential(
+            nn.Linear(dim, dim * expand, bias=False), nn.SiLU(),
+            nn.Linear(dim * expand, dim, bias=False), nn.Dropout(ffn_drop))
+    def _bn(self, x, bn):
+        return bn(x.permute(0, 2, 1)).permute(0, 2, 1)
+    def forward(self, x, mask=None):
+        x = x + self.drop1(self.attn(self._bn(x, self.bn1), mask))
+        x = x + self.ffn(self._bn(x, self.bn2))
+        return x
+
+class SignLanguageNet(nn.Module):
+    def __init__(self, channels=CHANNELS, num_classes=NUM_CLASSES, dim=384,
+                 ksize=11, n_conv=4, n_stages=3, n_heads=8, expand=2, dropout=0.2):
+        super().__init__()
+        self.use_late_dropout = False
+        self.stem_proj = nn.Linear(channels, dim, bias=False)
+        self.stem_bn   = nn.BatchNorm1d(dim)
+        self.stages = nn.ModuleList()
+        for _ in range(n_stages):
+            stage = nn.ModuleList(
+                [Conv1DBlock(dim, ksize, expand, dropout) for _ in range(n_conv)] +
+                [TransformerBlock(dim, n_heads, expand, dropout, dropout)])
+            self.stages.append(stage)
+        self.head_proj  = nn.Linear(dim, dim * 2)
+        self.pool       = nn.AdaptiveAvgPool1d(1)
+        self.dropout    = nn.Dropout(dropout)
+        self.late_drop  = nn.Dropout(0.35)
+        self.classifier = nn.Linear(dim * 2, num_classes)
+    def forward(self, x):
+        mask = x.abs().sum(-1) > PAD_VAL
+        x = self.stem_proj(x)
+        x = self.stem_bn(x.permute(0, 2, 1)).permute(0, 2, 1)
+        for stage in self.stages:
+            for layer in stage:
+                if isinstance(layer, TransformerBlock):
+                    x = layer(x, mask)
+                else:
+                    x = layer(x)
+        x = self.head_proj(x)
+        x = self.pool(x.permute(0, 2, 1)).squeeze(-1)
+        x = self.late_drop(x) if self.use_late_dropout else self.dropout(x)
+        return self.classifier(x)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PREPROCESSING
+# ═════════════════════════════════════════════════════════════════════════════
+def nan_mean(x, axis=None, keepdims=False):
+    mask = ~np.isnan(x)
+    return np.where(mask.any(axis=axis, keepdims=keepdims),
+                    np.nansum(x, axis=axis, keepdims=keepdims) /
+                    np.maximum(mask.sum(axis=axis, keepdims=keepdims), 1), 0.0)
+
+def preprocess(x, max_len=MAX_LEN):
+    valid = ~np.all(np.isnan(x), axis=(1, 2))
+    x = x[valid]
+    if len(x) == 0:
+        return np.zeros((max_len, CHANNELS), dtype=np.float32)
+    lip17_idx = 15
+    center = nan_mean(x[:, lip17_idx:lip17_idx+1, :2], axis=(0, 1), keepdims=True)
+    center = np.where(np.isnan(center), 0.5, center)
+    xy  = x[..., :2]
+    std = np.nanstd(xy - center[..., :2], axis=(0, 1), keepdims=True) + 1e-8
+    xy  = (xy - center[..., :2]) / std
+    xy  = xy[:max_len]
+    T   = len(xy)
+    dx  = np.zeros_like(xy)
+    dx2 = np.zeros_like(xy)
+    if T > 1: dx[:T-1]  = xy[1:]  - xy[:-1]
+    if T > 2: dx2[:T-2] = xy[2:]  - xy[:-2]
+    feat = np.concatenate([xy.reshape(T,-1), dx.reshape(T,-1), dx2.reshape(T,-1)], axis=-1)
+    feat = np.where(np.isnan(feat), 0.0, feat)
+    if T < max_len:
+        pad  = np.zeros((max_len - T, CHANNELS), dtype=np.float32)
+        feat = np.concatenate([feat, pad], axis=0)
+    return np.nan_to_num(feat, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
+
+def extract_landmarks_from_tasks(hand_results, face_results, frame_w, frame_h):
+    """Convert MediaPipe Tasks results into a (NUM_NODES, 3) array."""
+    full = np.full((ROWS_PER_FRAME, 3), np.nan, dtype=np.float32)
+
+    if face_results and face_results.face_landmarks:
+        for i, lm in enumerate(face_results.face_landmarks[0]):
+            if i < 468:
+                full[i] = [lm.x, lm.y, lm.z]
+
+    if hand_results and hand_results.hand_landmarks:
+        for hand_idx, hand_lms in enumerate(hand_results.hand_landmarks):
+            handedness_label = "Unknown"
+            if hand_results.handedness and hand_idx < len(hand_results.handedness):
+                handedness_label = hand_results.handedness[hand_idx][0].category_name
+            offset = 468 if handedness_label == "Left" else 522 if handedness_label == "Right" else None
+            if offset is None:
+                continue
+            for i, lm in enumerate(hand_lms):
+                if i < 21:
+                    full[offset + i] = [lm.x, lm.y, lm.z]
+
+    return full[POINT_LANDMARKS, :]
+
+
+def draw_landmarks_on_frame(frame, hand_results, face_results):
+    """Draw MediaPipe landmarks on the BGR frame. Returns annotated frame."""
+    H, W = frame.shape[:2]
+
+    # Face
+    if face_results and face_results.face_landmarks:
+        pts = [(int(lm.x * W), int(lm.y * H)) for lm in face_results.face_landmarks[0]]
+        for a, b in FACE_CONTOUR_CONNECTIONS:
+            if a < len(pts) and b < len(pts):
+                cv2.line(frame, pts[a], pts[b], (0, 210, 160), 1, cv2.LINE_AA)
+        for idx in LIP + NOSE[:2]:
+            if idx < len(pts):
+                cv2.circle(frame, pts[idx], 2, (0, 210, 160), -1, cv2.LINE_AA)
+
+    # Hands
+    if hand_results and hand_results.hand_landmarks:
+        for hi, hand_lms in enumerate(hand_results.hand_landmarks):
+            label = "Unknown"
+            if hand_results.handedness and hi < len(hand_results.handedness):
+                label = hand_results.handedness[hi][0].category_name
+            dot_col  = (0, 200, 255) if label == "Left" else (255, 100, 50)
+            line_col = (0, 140, 200) if label == "Left" else (200, 70, 30)
+
+            pts = [(int(lm.x * W), int(lm.y * H)) for lm in hand_lms]
+            for a, b in HAND_CONNECTIONS:
+                if a < len(pts) and b < len(pts):
+                    cv2.line(frame, pts[a], pts[b], line_col, 2, cv2.LINE_AA)
+            for i, pt in enumerate(pts):
+                r = 5 if i == 0 else 3
+                cv2.circle(frame, pt, r, dot_col, -1, cv2.LINE_AA)
+                cv2.circle(frame, pt, r+1, (0,0,0), 1, cv2.LINE_AA)
+
+    return frame
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  LLM ENGINE
+# ═════════════════════════════════════════════════════════════════════════════
+PROMPT_TEMPLATE = (
+    "You are an ASL (American Sign Language) interpreter assistant.\n"
+    "The signer used these signs: {words}\n\n"
+    "Your job: understand the MEANING and intent behind these signs, "
+    "then produce ONE natural, fluent English sentence that a person would actually say.\n"
+    "Do NOT just join the words together. Think about context and create a real sentence.\n\n"
+    "Examples:\n"
+    "  Signs: hello → 'Hello! How are you?'\n"
+    "  Signs: name what → 'What is your name?'\n"
+    "  Signs: help me please → 'Could you please help me?'\n"
+    "  Signs: water drink → 'I would like some water to drink.'\n"
+    "  Signs: sun hello horse → 'The sun is shining and I greet you on this fine day.'\n\n"
+    "Signs detected: {words}\n"
+    "Reply with ONLY the sentence, nothing else."
+)
+
+class LLMEngine:
+    def __init__(self, api_key: Optional[str] = None):
+        self.client = None
+        if not GROQ_OK:
+            return
+        try:
+            key = api_key or os.environ.get("GROQ_API_KEY", "")
+            if not key:
+                print("⚠️  No Groq API key provided")
+                return
+            self.client = Groq(api_key=key)
+        except Exception as e:
+            print(f"⚠️  Groq init failed: {e}")
+
+    def words_to_sentence(self, words: List[str]) -> str:
+        if not self.client or not words:
+            return " ".join(words)
+        prompt = PROMPT_TEMPLATE.format(words=", ".join(words))
+        for attempt in range(3):
+            try:
+                resp = self.client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=150,
+                    temperature=0.7,
+                )
+                return resp.choices[0].message.content.strip()
+            except Exception as e:
+                err = str(e)
+                if "429" in err or "rate_limit" in err.lower():
+                    time.sleep((attempt + 1) * 5)
+                else:
+                    break
+        return " ".join(words)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  TTS ENGINE
+# ═════════════════════════════════════════════════════════════════════════════
+class TTSEngine:
+    """
+    Queue-based TTS — one worker thread owns pyttsx3 for the app lifetime.
+    speak() enqueues text and returns immediately. No queue draining, no locks.
+    """
+    def __init__(self):
+        self.engine_type = TTS_ENGINE
+        import queue, threading
+        self._q = queue.Queue()
+        if self.engine_type not in ("pyttsx3", "espeak"):
+            self.engine_type = None
+        t = threading.Thread(target=self._worker, daemon=True, name="TTSWorker")
+        t.start()
+        print(f"[TTSEngine] started, engine_type={self.engine_type}")
+
+    def _worker(self):
+        """Single long-lived thread — owns the pyttsx3 engine forever."""
+        if self.engine_type == "pyttsx3":
+            engine = None
+            try:
+                engine = pyttsx3.init()
+                engine.setProperty("rate", 150)
+                print("[TTSEngine] pyttsx3 engine ready")
+            except Exception as e:
+                print(f"[TTSEngine] init failed: {e}")
+                self.engine_type = None
+
+            while True:
+                text = self._q.get()
+                if text is None:
+                    break
+                if engine is None:
+                    continue
+                print(f"[TTSEngine] speaking: '{text[:60]}'")
+                try:
+                    engine.say(text)
+                    engine.runAndWait()
+                    print("[TTSEngine] done speaking")
+                except RuntimeError:
+                    print("[TTSEngine] RuntimeError — reinitialising engine")
+                    try:
+                        engine = pyttsx3.init()
+                        engine.setProperty("rate", 150)
+                        engine.say(text)
+                        engine.runAndWait()
+                    except Exception as e2:
+                        print(f"[TTSEngine] reinit failed: {e2}")
+                except Exception as e:
+                    print(f"[TTSEngine] speak error: {e}")
+
+        elif self.engine_type == "espeak":
+            import subprocess
+            while True:
+                text = self._q.get()
+                if text is None:
+                    break
+                print(f"[TTSEngine] espeak: '{text[:60]}'")
+                try:
+                    subprocess.run(["espeak", "-s", "140", text],
+                                   capture_output=True)
+                except Exception as e:
+                    print(f"[TTSEngine] espeak error: {e}")
+        else:
+            while self._q.get() is not None:
+                pass
+
+    def speak(self, text: str):
+        """Enqueue text — never blocks, never drains the queue."""
+        print(f"[TTSEngine.speak] queuing: '{text[:60]}'")
+        if not self.engine_type or not text:
+            print(f"[TTSEngine.speak] skipped (engine_type={self.engine_type})")
+            return
+        self._q.put(text)
+
+    def shutdown(self):
+        self._q.put(None)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  STT ENGINE
+# ═════════════════════════════════════════════════════════════════════════════
+class STTEngine(QObject):
+    """Speech-to-Text engine using Google Web Speech API via speech_recognition."""
+    text_ready = Signal(str)
+    listening_changed = Signal(bool)
+    error_occurred = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.recognizer = None
+        self.microphone = None
+        if STT_ENGINE == "speech_recognition":
+            try:
+                self.recognizer = sr.Recognizer()
+                self.microphone = sr.Microphone()
+                with self.microphone as source:
+                    self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            except Exception as e:
+                print(f"⚠️ STT init failed: {e}")
+                self.recognizer = None
+
+    def listen_once(self):
+        """Start one-shot listening in a background thread."""
+        if not self.recognizer or not self.microphone:
+            self.error_occurred.emit("Speech recognition not available (install SpeechRecognition + PyAudio)")
+            return
+
+        def _listen():
+            try:
+                self.listening_changed.emit(True)
+                with self.microphone as source:
+                    self.recognizer.adjust_for_ambient_noise(source, duration=0.2)
+                    audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=10)
+                text = self.recognizer.recognize_google(audio)
+                self.text_ready.emit(text)
+            except sr.WaitTimeoutError:
+                self.error_occurred.emit("Listening timed out — no speech detected")
+            except sr.UnknownValueError:
+                self.error_occurred.emit("Could not understand audio")
+            except sr.RequestError as e:
+                self.error_occurred.emit(f"STT service error: {e}")
+            except Exception as e:
+                self.error_occurred.emit(f"STT error: {e}")
+            finally:
+                self.listening_changed.emit(False)
+
+        threading.Thread(target=_listen, daemon=True).start()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  CROSS-PLATFORM CAMERA HELPER
+# ═════════════════════════════════════════════════════════════════════════════
+def open_camera_robust(index=0, target_w=854, target_h=480, target_fps=30):
+    """Open camera with robust backend selection."""
+    if sys.platform == "win32":
+        backends = [
+            (cv2.CAP_DSHOW, "DirectShow"),
+            (cv2.CAP_MSMF, "MSMF"),
+            (cv2.CAP_ANY, "default"),
+        ]
+    elif sys.platform == "darwin":
+        backends = [
+            (cv2.CAP_AVFOUNDATION, "AVFoundation"),
+            (cv2.CAP_ANY, "default"),
+        ]
+    else:
+        backends = [
+            (cv2.CAP_V4L2, "V4L2"),
+            (cv2.CAP_ANY, "default"),
+        ]
+
+    for backend, name in backends:
+        try:
+            print(f"[Camera] Trying {name} (backend {backend})…")
+            cap = cv2.VideoCapture(index, backend)
+
+            if not cap.isOpened():
+                cap.release()
+                continue
+
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, target_w)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, target_h)
+            cap.set(cv2.CAP_PROP_FPS, target_fps)
+
+            time.sleep(0.3)
+            for attempt in range(5):
+                ret, frame = cap.read()
+                if ret and frame is not None and frame.size > 0:
+                    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    print(f"[Camera] ✅ {name} OK — {actual_w}x{actual_h}")
+                    return cap
+                time.sleep(0.1)
+
+            print(f"[Camera] ⚠️ {name} opened but no valid frames")
+            cap.release()
+
+        except Exception as e:
+            print(f"[Camera] ❌ {name} failed: {e}")
+            try:
+                cap.release()
+            except:
+                pass
+
+    return None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  INFERENCE WORKER (QThread)
+# ═════════════════════════════════════════════════════════════════════════════
+class InferenceWorker(QThread):
+    """Runs the ASL inference loop in a background thread."""
+
+    frame_ready     = Signal(QPixmap)
+    sign_predicted  = Signal(str, float)
+    fps_updated     = Signal(float)
+    error_occurred  = Signal(str)
+    status_changed  = Signal(str)
+
+    def __init__(
+        self,
+        model_dir: str,
+        device: str = "cpu",
+        confidence_thresh: float = 0.55,
+        pred_every: int = 8,
+        hand_landmarker=None,
+        face_landmarker=None,
+        idx2sign=None,
+        model=None,
+        use_onnx=False,
+        ort_session=None,
+        parent=None
+    ):
+        super().__init__(parent)
+        self._model_dir = Path(model_dir)
+        self._device = torch.device(device)
+        self._conf_thresh = confidence_thresh
+        self._pred_every = pred_every
+        self._running = False
+        self._cap = None
+
+        self._buffer = deque(maxlen=MAX_LEN)
+        self._frame_count = 0
+        self._pred_history = deque(maxlen=SMOOTH_WINDOW)
+        self._last_time = time.time()
+        self._fps_samples = deque(maxlen=30)
+
+        # Use shared MediaPipe resources (loaded once in SignBridgeBackend)
+        self._hand_landmarker = hand_landmarker
+        self._face_landmarker = face_landmarker
+        self._idx2sign = idx2sign
+        self._model = model
+        self._use_onnx = use_onnx
+        self._ort_session = ort_session
+
+    @torch.no_grad()
+    def _predict(self):
+        if len(self._buffer) < 5:
+            return "---", 0.0
+        seq  = np.stack(list(self._buffer), axis=0)
+        feat = preprocess(seq)
+
+        if self._use_onnx:
+            x = feat[np.newaxis]
+            logits = self._ort_session.run(None, {"landmarks": x})[0]
+            probs  = np.exp(logits - logits.max()) / np.sum(np.exp(logits - logits.max()))
+            idx    = int(probs[0].argmax())
+            conf   = float(probs[0][idx])
+        else:
+            x      = torch.tensor(feat).unsqueeze(0).to(self._device)
+            logits = self._model(x)
+            probs  = torch.softmax(logits, dim=-1)[0]
+            conf, idx = probs.max(dim=-1)
+            conf   = conf.item()
+            idx    = idx.item()
+
+        return self._idx2sign.get(idx, "???"), conf
+
+    def run(self):
+        """Main inference loop — runs in separate thread."""
+        print("[InferenceWorker] >>> Thread started")
+        self._running = True
+        self.status_changed.emit("running")
+
+        self._cap = open_camera_robust(0, target_w=854, target_h=480, target_fps=30)
+        if self._cap is None:
+            self.error_occurred.emit("Cannot open camera — check permissions and that no other app is using it")
+            self.status_changed.emit("error")
+            return
+
+        # FIX: Use wall-clock time (perf_counter) instead of a per-session counter.
+        # The hand/face landmarkers are SHARED across sessions (loaded once in
+        # SignBridgeBackend). MediaPipe VIDEO mode requires timestamps to be
+        # strictly monotonically increasing across ALL calls to detect_for_video,
+        # even across different InferenceWorker instances. Resetting to 0 at the
+        # start of each new session caused "Input timestamp must be monotonically
+        # increasing" on every session after the first.
+        # time.perf_counter() is guaranteed monotonic for the entire process lifetime.
+        current_sign = "---"
+        current_conf = 0.0
+
+        try:
+            while self._running:
+                ret, frame = self._cap.read()
+                if not ret or frame is None or frame.size == 0:
+                    time.sleep(0.01)
+                    continue
+
+                frame = cv2.flip(frame, 1)
+                H, W = frame.shape[:2]
+
+                if H == 0 or W == 0:
+                    continue
+
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+                # Derive timestamp from process-global monotonic clock (milliseconds).
+                # This is always > any timestamp used by a previous session.
+                timestamp_ms = int(time.perf_counter() * 1000)
+                hand_result = self._hand_landmarker.detect_for_video(mp_image, timestamp_ms)
+                face_result = self._face_landmarker.detect_for_video(mp_image, timestamp_ms)
+
+                lm_frame = extract_landmarks_from_tasks(hand_result, face_result, W, H)
+                self._buffer.append(lm_frame)
+                self._frame_count += 1
+
+                hand_visible = bool(hand_result and hand_result.hand_landmarks)
+                if self._frame_count % self._pred_every == 0 and hand_visible:
+                    sign, conf = self._predict()
+                    if conf > self._conf_thresh and sign not in ("---", "???"):
+                        if self._pred_history and sign != current_sign:
+                            self._pred_history.clear()
+                            self._buffer.clear()
+                        self._pred_history.append(sign)
+                    if self._pred_history:
+                        from collections import Counter
+                        best, count = Counter(self._pred_history).most_common(1)[0]
+                        current_sign = best
+                        current_conf = count / SMOOTH_WINDOW
+                        self.sign_predicted.emit(current_sign, current_conf)
+                    else:
+                        current_sign = "---"
+                        current_conf = 0.0
+
+                if not hand_visible:
+                    self._pred_history.clear()
+                    current_sign = "---"
+                    current_conf = 0.0
+
+                annotated = draw_landmarks_on_frame(frame.copy(), hand_result, face_result)
+
+                now = time.time()
+                self._fps_samples.append(1.0 / max(now - self._last_time, 1e-6))
+                self._last_time = now
+                fps = sum(self._fps_samples) / len(self._fps_samples)
+
+                cv2.putText(annotated, f"{fps:.0f} FPS", (W - 90, 22),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (140, 140, 160), 1, cv2.LINE_AA)
+                cv2.putText(annotated, current_sign.upper() if current_sign != "---" else "...",
+                            (20, 58), cv2.FONT_HERSHEY_DUPLEX, 1.8,
+                            (0, 255, 120) if current_conf > self._conf_thresh else (100, 100, 100),
+                            2, cv2.LINE_AA)
+
+                bar_x0, bar_y0, bar_x1, bar_y1 = 20, 72, W - 20, 86
+                cv2.rectangle(annotated, (bar_x0, bar_y0), (bar_x1, bar_y1), (40, 40, 60), -1)
+                fill = int((bar_x1 - bar_x0) * max(0, current_conf))
+                cv2.rectangle(annotated, (bar_x0, bar_y0), (bar_x0 + fill, bar_y1),
+                              (0, 255, 120) if current_conf > self._conf_thresh else (100, 100, 100), -1)
+
+                rgb_annotated = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb_annotated.shape
+                bytes_per_line = ch * w
+                qt_image = QImage(rgb_annotated.data, w, h, bytes_per_line, QImage.Format_RGB888)
+                pixmap = QPixmap.fromImage(qt_image)
+
+                self.frame_ready.emit(pixmap)
+                self.fps_updated.emit(fps)
+
+        except Exception as e:
+            import traceback
+            err_msg = f"Inference loop crashed: {e}\n{traceback.format_exc()}"
+            print(f"[InferenceWorker] {err_msg}")
+            self.error_occurred.emit(err_msg)
+
+        finally:
+            print("[InferenceWorker] >>> finally: cleaning up")
+            if self._cap:
+                self._cap.release()
+                self._cap = None
+                print("[InferenceWorker] Cap released")
+            # DO NOT close MediaPipe here — they are shared and reused!
+            self.status_changed.emit("idle")
+            print("[InferenceWorker] >>> finally: cleanup complete")
+
+    def stop(self):
+        print("[InferenceWorker] >>> Stop requested")
+        self._running = False
+
+        if self._cap is not None:
+            try:
+                self._cap.release()
+                print("[InferenceWorker] Cap released from stop()")
+            except Exception as e:
+                print(f"[InferenceWorker] Cap release error: {e}")
+
+        if not self.wait(10000):
+            print("[InferenceWorker] ⚠️ Thread did not stop in time — terminating")
+            self.terminate()
+            self.wait(1000)
+        print("[InferenceWorker] >>> Thread fully stopped")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  SIGN BRIDGE BACKEND (QObject — lives in main thread)
+# ═════════════════════════════════════════════════════════════════════════════
+class SignBridgeBackend(QObject):
+    """High-level backend controller that manages the inference worker,
+    LLM sentence generation, and TTS output. Lives in the main thread
+    and communicates with the UI via signals/slots."""
+
+    frame_ready        = Signal(QPixmap)
+    sign_predicted     = Signal(str, float)
+    sentence_updated   = Signal(str)
+    llm_sentence_ready = Signal(str)
+    tts_spoke          = Signal(str)
+    fps_updated        = Signal(float)
+    status_changed     = Signal(str)
+    error_occurred     = Signal(str)
+
+    stt_text_ready     = Signal(str)
+    stt_listening      = Signal(bool)
+    stt_error          = Signal(str)
+
+    def __init__(
+        self,
+        model_dir: str,
+        groq_api_key: Optional[str] = None,
+        device: str = "cpu",
+        parent=None
+    ):
+        super().__init__(parent)
+        self._model_dir = Path(model_dir)
+        self._device = device
+
+        self._session_active = False
+        self._detected_words = []
+        self._current_sign = "---"
+        self._current_conf = 0.0
+        self._llm_sentence = ""
+        self._llm_status = "idle"
+
+        self._spoken_history = deque(maxlen=20)
+
+        self._llm = LLMEngine(api_key=groq_api_key)
+        self._tts = TTSEngine()
+        self._stt = STTEngine(parent=self)
+        self._stt.text_ready.connect(self.stt_text_ready)
+        self._stt.listening_changed.connect(self.stt_listening)
+        self._stt.error_occurred.connect(self.stt_error)
+
+        self._worker = None
+
+        # ═════════════════════════════════════════════════════════════════════
+        # FIX: Load MediaPipe resources ONCE here, share across all workers
+        # ═════════════════════════════════════════════════════════════════════
+        self._hand_landmarker = None
+        self._face_landmarker = None
+        self._idx2sign = {}
+        self._model = None
+        self._use_onnx = False
+        self._ort_session = None
+        self._load_shared_resources()
+
+    def _load_shared_resources(self):
+        """Load MediaPipe and model resources ONCE. Never reload."""
+        try:
+            if not MEDIAPIPE_OK:
+                raise RuntimeError("MediaPipe not installed")
+
+            print("[SignBridgeBackend] Loading shared resources (once)...")
+
+            hand_task = self._model_dir / "hand_landmarker.task"
+            face_task = self._model_dir / "face_landmarker.task"
+            scripted_pt = self._model_dir / "model_scripted.pt"
+            onnx_model = self._model_dir / "model.onnx"
+            idx2sign_json = self._model_dir / "idx2sign.json"
+
+            with open(idx2sign_json) as f:
+                raw = json.load(f)
+            self._idx2sign = {int(k): v for k, v in raw.items()}
+
+            if scripted_pt.exists():
+                self._model = torch.jit.load(str(scripted_pt), map_location=self._device)
+                self._model.eval()
+                self._use_onnx = False
+            elif onnx_model.exists():
+                import onnxruntime as ort
+                self._ort_session = ort.InferenceSession(str(onnx_model))
+                self._use_onnx = True
+            else:
+                raise FileNotFoundError("No model file found (.pt or .onnx)")
+
+            hand_base = mp_tasks.BaseOptions(model_asset_path=str(hand_task))
+            hand_opts = mp_vision.HandLandmarkerOptions(
+                base_options=hand_base,
+                running_mode=mp_vision.RunningMode.VIDEO,
+                num_hands=2,
+                min_hand_detection_confidence=0.5,
+                min_hand_presence_confidence=0.5,
+                min_tracking_confidence=0.5,
+            )
+            self._hand_landmarker = mp_vision.HandLandmarker.create_from_options(hand_opts)
+
+            face_base = mp_tasks.BaseOptions(model_asset_path=str(face_task))
+            face_opts = mp_vision.FaceLandmarkerOptions(
+                base_options=face_base,
+                running_mode=mp_vision.RunningMode.VIDEO,
+                num_faces=1,
+                min_face_detection_confidence=0.5,
+                min_face_presence_confidence=0.5,
+                min_tracking_confidence=0.5,
+                output_face_blendshapes=False,
+                output_facial_transformation_matrixes=False,
+            )
+            self._face_landmarker = mp_vision.FaceLandmarker.create_from_options(face_opts)
+
+            print("[SignBridgeBackend] ✅ Shared resources loaded successfully")
+
+        except Exception as e:
+            print(f"[SignBridgeBackend] ❌ Failed to load shared resources: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+    def start_session(self):
+        print("[SignBridgeBackend] >>> start_session called")
+
+        if self._worker is not None:
+            if self._worker.isRunning():
+                print("[SignBridgeBackend] ⚠️ Old worker still running! Stopping...")
+                self._worker.stop()
+            print("[SignBridgeBackend] Deleting old worker reference")
+            self._worker = None
+
+        try:
+            print("[SignBridgeBackend] Creating new InferenceWorker with shared resources...")
+            self._worker = InferenceWorker(
+                model_dir=self._model_dir,
+                device=self._device,
+                parent=self,
+                # Pass shared resources — never reload MediaPipe
+                hand_landmarker=self._hand_landmarker,
+                face_landmarker=self._face_landmarker,
+                idx2sign=self._idx2sign,
+                model=self._model,
+                use_onnx=self._use_onnx,
+                ort_session=self._ort_session,
+            )
+            self._worker.frame_ready.connect(self.frame_ready)
+            self._worker.sign_predicted.connect(self._on_sign_predicted)
+            self._worker.fps_updated.connect(self.fps_updated)
+            self._worker.error_occurred.connect(self.error_occurred)
+            self._worker.status_changed.connect(self.status_changed)
+
+            print("[SignBridgeBackend] Starting worker thread...")
+            self._worker.start()
+            self._session_active = True
+            print("[SignBridgeBackend] >>> start_session complete")
+        except Exception as e:
+            print(f"[SignBridgeBackend] ❌ start_session error: {e}")
+            import traceback
+            traceback.print_exc()
+            self.error_occurred.emit(str(e))
+            self.status_changed.emit("error")
+
+    def stop_session(self):
+        print("[SignBridgeBackend] >>> stop_session called")
+        self._session_active = False
+        if self._worker:
+            print("[SignBridgeBackend] Stopping worker...")
+            self._worker.stop()
+            print("[SignBridgeBackend] Worker stopped, deleting reference")
+            self._worker = None
+        else:
+            print("[SignBridgeBackend] No worker to stop")
+        self.status_changed.emit("idle")
+        print("[SignBridgeBackend] >>> stop_session complete")
+
+    def is_running(self) -> bool:
+        """Return True if the inference worker is currently active."""
+        return self._worker is not None and self._worker.isRunning()
+
+    def _on_sign_predicted(self, sign: str, conf: float):
+        self._current_sign = sign
+        self._current_conf = conf
+        self.sign_predicted.emit(sign, conf)
+
+    def add_word(self):
+        if self._current_sign not in ("---", "???", "...") and self._current_conf >= CONFIDENCE_THRESH:
+            if not self._detected_words or self._detected_words[-1] != self._current_sign:
+                self._detected_words.append(self._current_sign)
+                self.sentence_updated.emit(" ".join(self._detected_words))
+
+    def add_text_words(self, text: str):
+        words = text.lower().strip().split()
+        for word in words:
+            if not self._detected_words or self._detected_words[-1] != word:
+                self._detected_words.append(word)
+        if words:
+            self.sentence_updated.emit(" ".join(self._detected_words))
+
+    def clear_words(self):
+        self._detected_words.clear()
+        self._llm_sentence = ""
+        self._llm_status = "idle"
+        self.sentence_updated.emit("")
+        self.llm_sentence_ready.emit("")
+
+    @property
+    def llm_sentence(self) -> str:
+        return self._llm_sentence
+
+    @property
+    def detected_words(self) -> list:
+        return list(self._detected_words)
+
+    def generate_sentence(self):
+        if not self._detected_words:
+            return
+        self._llm_status = "thinking"
+        words_snapshot = list(self._detected_words)
+
+        def _task():
+            result = self._llm.words_to_sentence(words_snapshot)
+            self._llm_sentence = result
+            self._llm_status = "ready"
+            self._spoken_history.append(result)
+            # Use a Qt-safe signal emit from main thread
+            from PySide6.QtCore import QMetaObject, Qt as _Qt
+            QMetaObject.invokeMethod(
+                self, "_on_llm_done",
+                _Qt.ConnectionType.QueuedConnection,
+            )
+
+        threading.Thread(target=_task, daemon=True).start()
+
+    @Slot()
+    def _on_llm_done(self):
+        """Runs on main thread after LLM finishes — safe to emit signals and speak."""
+        result = self._llm_sentence
+        print(f"[Backend._on_llm_done] result='{result[:60]}'")
+        self.llm_sentence_ready.emit(result)
+        self._tts.speak(result)
+        self.tts_spoke.emit(result)
+
+    def speak(self, text: str):
+        """Speak arbitrary text via TTS. Called by the UI repeat button."""
+        print(f"[Backend.speak] called: '{text[:60]}' engine={self._tts.engine_type}")
+        if not text:
+            return
+        self._tts.speak(text)
+        self.tts_spoke.emit(text)
+
+    def repeat_last(self):
+        if self._spoken_history:
+            last = self._spoken_history[-1]
+            self._tts.speak(last)
+            self.tts_spoke.emit(last)
+        elif self._detected_words:
+            text = " ".join(self._detected_words)
+            self._spoken_history.append(text)
+            self._tts.speak(text)
+            self.tts_spoke.emit(text)
+
+    def speak_raw_words(self):
+        if self._detected_words:
+            text = " ".join(self._detected_words)
+            self._spoken_history.append(text)
+            self._tts.speak(text)
+            self.tts_spoke.emit(text)
+
+    def start_listening(self):
+        self._stt.listen_once()
+
+    def export_txt(self, filepath: str):
+        with open(filepath, "w") as f:
+            f.write(" ".join(self._detected_words))
+        return filepath
+
+    def export_srt(self, filepath: str):
+        lines = []
+        for i, word in enumerate(self._detected_words, 1):
+            start = self._format_time((i - 1) * 3)
+            end = self._format_time(i * 3)
+            lines.append(f"{i}\n{start} --> {end}\n{word}\n")
+        with open(filepath, "w") as f:
+            f.write("\n".join(lines))
+        return filepath
+
+    @staticmethod
+    def _format_time(seconds: int) -> str:
+        hrs = seconds // 3600
+        mins = (seconds % 3600) // 60
+        secs = seconds % 60
+        return f"{hrs:02d}:{mins:02d}:{secs:02d},000"

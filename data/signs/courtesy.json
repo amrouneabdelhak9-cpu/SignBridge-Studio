@@ -1,0 +1,92 @@
+[
+  {
+    "id": "c1",
+    "name": "Thank You",
+    "instruction": "Flat hand moves from chin forward"
+  },
+  {
+    "id": "c2",
+    "name": "Sorry",
+    "instruction": "Fist circles on chest"
+  },
+  {
+    "id": "c3",
+    "name": "Excuse Me",
+    "instruction": "Fingers brush off back of hand"
+  },
+  {
+    "id": "c4",
+    "name": "Help",
+    "instruction": "Thumb up on flat palm, lift together"
+  },
+  {
+    "id": "c5",
+    "name": "Please Help",
+    "instruction": "Circle chest then lift both hands"
+  },
+  {
+    "id": "c6",
+    "name": "You're Welcome",
+    "instruction": "Hand flips open palm up"
+  },
+  {
+    "id": "c7",
+    "name": "Understand",
+    "instruction": "Index flicks up from forehead"
+  },
+  {
+    "id": "c8",
+    "name": "Don't Know",
+    "instruction": "Hand shakes at shoulder level"
+  },
+  {
+    "id": "c9",
+    "name": "Repeat",
+    "instruction": "Curved fingers tap palm twice"
+  },
+  {
+    "id": "c10",
+    "name": "Slow Down",
+    "instruction": "Flat hands push down slowly"
+  },
+  {
+    "id": "c11",
+    "name": "Stop",
+    "instruction": "Flat hand chops into palm"
+  },
+  {
+    "id": "c12",
+    "name": "Wait",
+    "instruction": "Spread fingers wiggle slightly"
+  },
+  {
+    "id": "c13",
+    "name": "OK",
+    "instruction": "Index and thumb form circle"
+  },
+  {
+    "id": "c14",
+    "name": "Good",
+    "instruction": "Flat hand moves from chin forward"
+  },
+  {
+    "id": "c15",
+    "name": "Bad",
+    "instruction": "Fingers at chin flip down"
+  },
+  {
+    "id": "c16",
+    "name": "Right",
+    "instruction": "Index fingers tap side by side"
+  },
+  {
+    "id": "c17",
+    "name": "Wrong",
+    "instruction": "Y-hand taps chin"
+  },
+  {
+    "id": "c18",
+    "name": "Agree",
+    "instruction": "Index fingers align together"
+  }
+]
